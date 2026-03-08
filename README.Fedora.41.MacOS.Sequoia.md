@@ -27,7 +27,7 @@ How to build:
 4. Copy the build scripts - either for Linux or MacOS - to the `build-torch-mlir` directory.
 5. Run `./run-cmake-configure-${linux|macos}.sh` script from the build directory.
 6. When it's finished, run the `build-torch-mlir-${linux|macos}.sh` script to build.
-7. When that one is finished, run the `install-torch-mlir-${linux|macos}.sh script. This script will install what's needed into the `install-torch-mlir` directory.
+7. When that one is finished, run the `install-torch-mlir-${linux|macos}.sh` script to install to DESTDIR. This script will install what's needed into the `install-torch-mlir` directory.
 8. I added the RPM spec file for Torch-MLIR on Linux in the `build-scripts` directory.
 
 That's it. :-)
