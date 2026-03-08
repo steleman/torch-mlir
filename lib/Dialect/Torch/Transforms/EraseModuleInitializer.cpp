@@ -7,9 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PassDetail.h"
+
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
 #include "torch-mlir/Dialect/Torch/Transforms/Passes.h"
@@ -17,14 +18,10 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::Torch {
-
-#define GEN_PASS_DEF_ERASEMODULEINITIALIZER
-#include "torch-mlir/Dialect/Torch/Transforms/Passes.h.inc"
 
 namespace {
 class EraseModuleInitializerPass
-    : public impl::EraseModuleInitializerBase<EraseModuleInitializerPass> {
+    : public EraseModuleInitializerBase<EraseModuleInitializerPass> {
   void runOnOperation() override {
     for (auto initializer :
          getOperation().getOps<GlobalSlotModuleInitializerOp>()) {
@@ -40,8 +37,7 @@ class EraseModuleInitializerPass
 };
 } // namespace
 
-std::unique_ptr<OperationPass<ModuleOp>> createEraseModuleInitializerPass() {
+std::unique_ptr<OperationPass<ModuleOp>>
+mlir::torch::Torch::createEraseModuleInitializerPass() {
   return std::make_unique<EraseModuleInitializerPass>();
 }
-
-} // namespace mlir::torch::Torch

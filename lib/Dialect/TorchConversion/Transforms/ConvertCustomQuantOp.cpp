@@ -7,11 +7,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PassDetail.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "torch-mlir/Conversion/Utils/Utils.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
@@ -22,10 +22,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::TorchConversion {
-
-#define GEN_PASS_DEF_CONVERTCUSTOMQUANTOP
-#include "torch-mlir/Dialect/TorchConversion/Transforms/Passes.h.inc"
 
 namespace {
 class ConvertCustomQuantizedMatmulOp : public OpConversionPattern<OperatorOp> {
@@ -110,8 +106,8 @@ public:
     RankedTensorType lhsExpandedType =
         RankedTensorType::get(lhsExpandedShape, elementType);
     SmallVector<ReassociationIndices, 4> lhsReassociation = {{0}, {1}, {2, 3}};
-    Value lhsExpanded = tensor::ExpandShapeOp::create(
-        rewriter, loc, lhsExpandedType, lhs, lhsReassociation);
+    Value lhsExpanded = rewriter.create<tensor::ExpandShapeOp>(
+        loc, lhsExpandedType, lhs, lhsReassociation);
 
     // expand rhs
     std::vector<int64_t> rhsExpandedShape = {rhsShape[0], rhsReductDimSize / gs,
@@ -119,23 +115,23 @@ public:
     RankedTensorType rhsExpandedType =
         RankedTensorType::get(rhsExpandedShape, rhsElementType);
     SmallVector<ReassociationIndices, 4> rhsReassociation = {{0}, {1, 2}};
-    Value rhsExpanded = tensor::ExpandShapeOp::create(
-        rewriter, loc, rhsExpandedType, rhsQuant, rhsReassociation);
-    Value cst0 = arith::ConstantOp::create(rewriter, loc,
-                                           FloatAttr::get(elementType, 0.0));
+    Value rhsExpanded = rewriter.create<tensor::ExpandShapeOp>(
+        loc, rhsExpandedType, rhsQuant, rhsReassociation);
+    Value cst0 = rewriter.create<arith::ConstantOp>(
+        loc, FloatAttr::get(elementType, 0.0));
 
     Value emptyDequant =
-        tensor::EmptyOp::create(rewriter, loc, rhsExpandedShape, elementType);
+        rewriter.create<tensor::EmptyOp>(loc, rhsExpandedShape, elementType);
     SmallVector<Value> dynDims;
     for (int i = 0; i < lhsType.getRank(); i++) {
       if (lhsType.isDynamicDim(i)) {
-        dynDims.push_back(tensor::DimOp::create(rewriter, loc, lhs, i));
+        dynDims.push_back(rewriter.create<tensor::DimOp>(loc, lhs, i));
       }
     }
-    Value empty = tensor::EmptyOp::create(rewriter, loc, resultShape,
-                                          elementType, dynDims);
+    Value empty = rewriter.create<tensor::EmptyOp>(loc, resultShape,
+                                                   elementType, dynDims);
     Value output =
-        linalg::FillOp::create(rewriter, loc, cst0, empty).getResult(0);
+        rewriter.create<linalg::FillOp>(loc, cst0, empty).getResult(0);
 
     AffineExpr d0, d1, d2, d3, d4;
     bindDims(getContext(), d0, d1, d2, d3, d4);
@@ -156,36 +152,39 @@ public:
         utils::IteratorType::reduction};
 
     Value rhsDequant =
-        linalg::GenericOp::create(
-            rewriter, loc, emptyDequant.getType(),
-            ValueRange{rhsExpanded, scales, zps}, emptyDequant,
-            /*indexingMaps=*/dqIndexingMaps,
-            /*iteratorTypes=*/dequantIteratorTypes,
-            [&](OpBuilder &b, Location loc, ValueRange args) {
-              Value w = args[0], scale = args[1], zeroPoint = args[2];
-              Value extw =
-                  arith::ExtUIOp::create(b, loc, rewriter.getI32Type(), w);
-              Value fp_extw =
-                  arith::UIToFPOp::create(b, loc, rewriter.getF16Type(), extw);
-              Value shifted = arith::SubFOp::create(b, loc, fp_extw, zeroPoint);
-              Value dqw = arith::MulFOp::create(b, loc, shifted, scale);
-              linalg::YieldOp::create(b, loc, dqw);
-            })
+        rewriter
+            .create<linalg::GenericOp>(
+                loc, emptyDequant.getType(),
+                ValueRange{rhsExpanded, scales, zps}, emptyDequant,
+                /*indexingMaps=*/dqIndexingMaps,
+                /*iteratorTypes=*/dequantIteratorTypes,
+                [&](OpBuilder &b, Location loc, ValueRange args) {
+                  Value w = args[0], scale = args[1], zeroPoint = args[2];
+                  Value extw =
+                      b.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), w);
+                  Value fp_extw = b.create<arith::UIToFPOp>(
+                      loc, rewriter.getF16Type(), extw);
+                  Value shifted =
+                      b.create<arith::SubFOp>(loc, fp_extw, zeroPoint);
+                  Value dqw = b.create<arith::MulFOp>(loc, shifted, scale);
+                  b.create<linalg::YieldOp>(loc, dqw);
+                })
             .getResult(0);
 
-    Value matmulDequant = linalg::GenericOp::create(
-                              rewriter, loc, output.getType(),
-                              ValueRange{lhsExpanded, rhsDequant}, output,
-                              /*indexingMaps=*/matIndexingMaps,
-                              /*iteratorTypes=*/matmulIteratorTypes,
-                              [&](OpBuilder &b, Location loc, ValueRange args) {
-                                Value l = args[0], r = args[1], out = args[2];
-                                Value pd = arith::MulFOp::create(b, loc, l, r);
-                                Value ac =
-                                    arith::AddFOp::create(b, loc, pd, out);
-                                linalg::YieldOp::create(b, loc, ac);
-                              })
-                              .getResult(0);
+    Value matmulDequant =
+        rewriter
+            .create<linalg::GenericOp>(
+                loc, output.getType(), ValueRange{lhsExpanded, rhsDequant},
+                output,
+                /*indexingMaps=*/matIndexingMaps,
+                /*iteratorTypes=*/matmulIteratorTypes,
+                [&](OpBuilder &b, Location loc, ValueRange args) {
+                  Value l = args[0], r = args[1], out = args[2];
+                  Value pd = b.create<arith::MulFOp>(loc, l, r);
+                  Value ac = b.create<arith::AddFOp>(loc, pd, out);
+                  b.create<linalg::YieldOp>(loc, ac);
+                })
+            .getResult(0);
 
     rewriter.replaceOpWithNewOp<tensor::CastOp>(op, resultType, matmulDequant);
     return success();
@@ -195,7 +194,8 @@ public:
 
 namespace {
 class ConvertCustomQuantOpPass
-    : public impl::ConvertCustomQuantOpBase<ConvertCustomQuantOpPass> {
+    : public TorchConversion::ConvertCustomQuantOpBase<
+          ConvertCustomQuantOpPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect>();
     registry.insert<func::FuncDialect>();
@@ -228,8 +228,6 @@ class ConvertCustomQuantOpPass
 } // namespace
 
 std::unique_ptr<InterfacePass<FunctionOpInterface>>
-createConvertCustomQuantOpPass() {
+mlir::torch::TorchConversion::createConvertCustomQuantOpPass() {
   return std::make_unique<ConvertCustomQuantOpPass>();
 }
-
-} // namespace mlir::torch::TorchConversion

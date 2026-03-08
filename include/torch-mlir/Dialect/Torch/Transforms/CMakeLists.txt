@@ -4,4 +4,7 @@ mlir_tablegen(Transforms.capi.h.inc -gen-pass-capi-header)
 mlir_tablegen(Transforms.capi.cpp.inc -gen-pass-capi-impl)
 add_public_tablegen_target(TorchMLIRTorchPassIncGen)
 
+if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
 add_mlir_doc(Passes TorchMLIRTorchTransforms ./ -gen-pass-doc)
+endif()
+

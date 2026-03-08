@@ -7,9 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "PassDetail.h"
+
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
 #include "torch-mlir/Dialect/Torch/Transforms/Passes.h"
@@ -17,10 +17,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::Torch {
-
-#define GEN_PASS_DEF_ADJUSTCALLINGCONVENTIONS
-#include "torch-mlir/Dialect/Torch/Transforms/Passes.h.inc"
 
 // Map from func name and arg index to the type bound for that arg.
 // This is needed because to rewrite calls, we need the non-local information
@@ -136,20 +132,19 @@ public:
       newOperands.push_back(operand.value());
     }
 
-    func::CallOp newCall =
-        func::CallOp::create(rewriter, call.getLoc(), call.getCallee(),
-                             convertedResults, newOperands);
+    func::CallOp newCall = rewriter.create<func::CallOp>(
+        call.getLoc(), call.getCallee(), convertedResults, newOperands);
     int newOpResultIdx = 0;
     SmallVector<Value> newResults;
     for (auto type : call.getResultTypes()) {
       if (isa<Torch::NoneType>(type)) {
         newResults.push_back(
-            ConstantNoneOp::create(rewriter, call.getLoc(), type));
+            rewriter.create<ConstantNoneOp>(call.getLoc(), type));
         continue;
       }
       if (isa<Torch::TupleType>(type)) {
-        newResults.push_back(PrimTupleConstructOp::create(
-            rewriter, call.getLoc(), type, newCall.getResults()));
+        newResults.push_back(rewriter.create<PrimTupleConstructOp>(
+            call.getLoc(), type, newCall.getResults()));
         continue;
       }
       newResults.push_back(newCall.getResult(newOpResultIdx++));
@@ -201,10 +196,10 @@ public:
           if (auto tuple = dyn_cast<Torch::TupleType>(operand.getType())) {
             Location loc = op.getLoc();
             for (auto en : llvm::enumerate(tuple.getContainedTypes())) {
-              auto i = ConstantIntOp::create(
-                  rewriter, loc, rewriter.getI64IntegerAttr(en.index()));
-              newOperands.push_back(PrimTupleIndexOp::create(
-                  rewriter, loc, en.value(), operand, i));
+              auto i = rewriter.create<ConstantIntOp>(
+                  loc, rewriter.getI64IntegerAttr(en.index()));
+              newOperands.push_back(rewriter.create<PrimTupleIndexOp>(
+                  loc, en.value(), operand, i));
             }
             continue;
           }
@@ -289,7 +284,7 @@ static LogicalResult adjustCallingConventions(func::FuncOp func,
 
 namespace {
 class AdjustCallingConventionsPass
-    : public impl::AdjustCallingConventionsBase<AdjustCallingConventionsPass> {
+    : public AdjustCallingConventionsBase<AdjustCallingConventionsPass> {
   void runOnOperation() override {
     auto module = getOperation();
     TypeBoundMap typeBoundMap;
@@ -310,8 +305,7 @@ class AdjustCallingConventionsPass
 };
 } // namespace
 
-std::unique_ptr<OperationPass<ModuleOp>> createAdjustCallingConventionsPass() {
+std::unique_ptr<OperationPass<ModuleOp>>
+mlir::torch::Torch::createAdjustCallingConventionsPass() {
   return std::make_unique<AdjustCallingConventionsPass>();
 }
-
-} // namespace mlir::torch::Torch

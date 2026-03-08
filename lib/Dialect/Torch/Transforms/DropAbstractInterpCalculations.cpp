@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Pass/Pass.h"
+#include "PassDetail.h"
+
 #include "mlir/Transforms/DialectConversion.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
@@ -17,10 +17,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::Torch {
-
-#define GEN_PASS_DEF_DROPABSTRACTINTERPCALCULATIONS
-#include "torch-mlir/Dialect/Torch/Transforms/Passes.h.inc"
 
 namespace {
 template <typename CalculateOp>
@@ -43,7 +39,7 @@ public:
 
 namespace {
 class DropAbstractInterpCalculationsPass
-    : public impl::DropAbstractInterpCalculationsBase<
+    : public DropAbstractInterpCalculationsBase<
           DropAbstractInterpCalculationsPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
@@ -65,8 +61,6 @@ class DropAbstractInterpCalculationsPass
 } // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>>
-createDropAbstractInterpCalculationsPass() {
+mlir::torch::Torch::createDropAbstractInterpCalculationsPass() {
   return std::make_unique<DropAbstractInterpCalculationsPass>();
 }
-
-} // namespace mlir::torch::Torch

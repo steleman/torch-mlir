@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Pass/Pass.h"
+#include "PassDetail.h"
+
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
@@ -19,10 +19,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::TorchConversion {
-
-#define GEN_PASS_DEF_UNPACKQUANTTENSOR
-#include "torch-mlir/Dialect/TorchConversion/Transforms/Passes.h.inc"
 
 namespace {
 class UnpackQuantizedMatmulWeights
@@ -123,7 +119,7 @@ public:
 
 namespace {
 class UnpackQuantTensorPass
-    : public impl::UnpackQuantTensorBase<UnpackQuantTensorPass> {
+    : public TorchConversion::UnpackQuantTensorBase<UnpackQuantTensorPass> {
   using UnpackQuantTensorBase<UnpackQuantTensorPass>::UnpackQuantTensorBase;
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<func::FuncDialect>();
@@ -142,8 +138,6 @@ class UnpackQuantTensorPass
 } // namespace
 
 std::unique_ptr<InterfacePass<FunctionOpInterface>>
-createUnpackQuantTensorPass() {
+mlir::torch::TorchConversion::createUnpackQuantTensorPass() {
   return std::make_unique<UnpackQuantTensorPass>();
 }
-
-} // namespace mlir::torch::TorchConversion

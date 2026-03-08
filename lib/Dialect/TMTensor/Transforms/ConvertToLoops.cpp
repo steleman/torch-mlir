@@ -20,6 +20,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "torch-mlir-dialects/Dialect/TMTensor/IR/TMTensorDialect.h"
 #include "torch-mlir-dialects/Dialect/TMTensor/IR/TMTensorOps.h"
+#include "torch-mlir-dialects/Dialect/TMTensor/Transforms/PassDetail.h"
 #include "torch-mlir-dialects/Dialect/TMTensor/Transforms/Passes.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -27,10 +28,6 @@
 
 using namespace mlir;
 using namespace mlir::torch::TMTensor;
-namespace mlir::torch::TMTensor {
-
-#define GEN_PASS_DEF_TMTENSORTOLOOPS
-#include "torch-mlir-dialects/Dialect/TMTensor/Transforms/Passes.h.inc"
 
 /// Recursive method that lowers one dimension of the `ScalarLoopOpInterface` to
 /// scalar loops at a time.
@@ -50,13 +47,13 @@ static LogicalResult lowerToLoopsImpl(OpBuilder &builder,
       getValueOrCreateConstantIndexOp(builder, loc, loopRanges[loopDepth].size);
   Value stride = getValueOrCreateConstantIndexOp(builder, loc,
                                                  loopRanges[loopDepth].stride);
-  scf::ForOp::create(
-      builder, loc, offset, size, stride, ValueRange{},
+  builder.create<scf::ForOp>(
+      loc, offset, size, stride, ValueRange{},
       [&](OpBuilder &b, Location loc, Value iv, ValueRange args) {
         ivs.push_back(iv);
         status =
             lowerToLoopsImpl(b, scalarLoopOp, loopRanges, loopDepth + 1, ivs);
-        scf::YieldOp::create(b, loc);
+        b.create<scf::YieldOp>(loc);
       });
   return status;
 }
@@ -101,8 +98,7 @@ struct ScalarLoopOpInterfaceLowerToLoopsPattern : public RewritePattern {
 //===----------------------------------------------------------------------===//
 
 namespace {
-struct TMTensorToLoopsPass
-    : public impl::TMTensorToLoopsBase<TMTensorToLoopsPass> {
+struct TMTensorToLoopsPass : public TMTensorToLoopsBase<TMTensorToLoopsPass> {
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<linalg::LinalgDialect, func::FuncDialect,
                     mlir::arith::ArithDialect, math::MathDialect,
@@ -121,8 +117,7 @@ struct TMTensorToLoopsPass
 };
 } // namespace
 
-std::unique_ptr<OperationPass<func::FuncOp>> createTMTensorToLoopsPass() {
+std::unique_ptr<OperationPass<func::FuncOp>>
+torch::TMTensor::createTMTensorToLoopsPass() {
   return std::make_unique<TMTensorToLoopsPass>();
 }
-
-} // namespace mlir::torch::TMTensor

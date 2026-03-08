@@ -78,6 +78,7 @@ TORCH_MLIR_ENABLE_LTC = _check_env_flag("TORCH_MLIR_ENABLE_LTC", True)
 TORCH_MLIR_ENABLE_ONLY_MLIR_PYTHON_BINDINGS = _check_env_flag(
     "TORCH_MLIR_ENABLE_ONLY_MLIR_PYTHON_BINDINGS", True
 )
+
 LLVM_INSTALL_DIR = os.getenv("LLVM_INSTALL_DIR", None)
 SRC_DIR = pathlib.Path(__file__).parent.absolute()
 CMAKE_BUILD_TYPE = os.getenv("CMAKE_BUILD_TYPE", "Release")
@@ -85,7 +86,11 @@ CMAKE_BUILD_TYPE = os.getenv("CMAKE_BUILD_TYPE", "Release")
 TORCH_MLIR_CMAKE_ALREADY_BUILT = _check_env_flag(
     "TORCH_MLIR_CMAKE_ALREADY_BUILT", False
 )
+
 TORCH_MLIR_CMAKE_BUILD_DIR = os.getenv("TORCH_MLIR_CMAKE_BUILD_DIR")
+LLVM_TARGETS_TO_BUILD = os.getenv("LLVM_TARGETS_TO_BUILD", "X86;")
+TORCH_MLIR_CMAKE_FLAGS = os.getenv("TORCH_MLIR_CMAKE_FLAGS", "")
+
 MAX_JOBS = os.getenv("MAX_JOBS", str(multiprocessing.cpu_count()))
 
 
@@ -110,21 +115,16 @@ class CMakeBuild(build_py):
 
         cmake_config_args = [
             f"cmake",
+            f"-G \"Unix Makefiles\"",
+            f"{TORCH_MLIR_CMAKE_FLAGS}",
             f"-DCMAKE_BUILD_TYPE={CMAKE_BUILD_TYPE}",
             f"-DPython3_EXECUTABLE={sys.executable}",
-            f"-DPython3_FIND_VIRTUALENV=ONLY",
             f"-DPython_EXECUTABLE={sys.executable}",
-            f"-DPython_FIND_VIRTUALENV=ONLY",
             f"-DMLIR_ENABLE_BINDINGS_PYTHON=ON",
-            "-DMLIR_BINDINGS_PYTHON_NB_DOMAIN=torch_mlir",
-            f"-DLLVM_TARGETS_TO_BUILD=host",
-            f"-DLLVM_ENABLE_ZSTD=OFF",
-            # Optimization options for building wheels.
-            f"-DCMAKE_VISIBILITY_INLINES_HIDDEN=ON",
-            f"-DCMAKE_C_VISIBILITY_PRESET=hidden",
-            f"-DCMAKE_CXX_VISIBILITY_PRESET=hidden",
-            f"-DTORCH_MLIR_ENABLE_LTC={'ON' if TORCH_MLIR_ENABLE_LTC else 'OFF'}",
-            f"-DTORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS={'OFF' if TORCH_MLIR_ENABLE_ONLY_MLIR_PYTHON_BINDINGS else 'ON'}",
+            f"-DLLVM_TARGETS_TO_BUILD={LLVM_TARGETS_TO_BUILD}",
+            f"-DLLVM_ENABLE_ZSTD=ON",
+            f"-DTORCH_MLIR_ENABLE_LTC=ON",
+            f"-DTORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS=ON",
         ]
         if LLVM_INSTALL_DIR:
             cmake_config_args += [

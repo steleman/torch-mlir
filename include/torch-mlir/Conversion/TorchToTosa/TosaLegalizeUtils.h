@@ -11,7 +11,6 @@
 #define TORCHMLIR_CONVERSION_TORCHTOTOSA_TOSALEGALIZEUTILS_H
 
 #include "mlir/Dialect/Quant/IR/QuantTypes.h"        // from @llvm-project
-#include "mlir/Dialect/Tosa/IR/TosaOps.h"            // from @llvm-project
 #include "mlir/Dialect/Tosa/Utils/ConversionUtils.h" // from @llvm-project
 #include "mlir/Dialect/Tosa/Utils/ShapeUtils.h"      // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"               // from @llvm-project
@@ -27,13 +26,18 @@ namespace tosa {
 // rounding mode
 Value buildRescale(PatternRewriter &rewriter, Operation *op,
                    ShapedType output_type, Value input_val, double scale,
-                   int64_t input_zp, int64_t output_zp,
-                   tosa::RoundingMode rounding_mode, bool scale32);
+                   int64_t input_zp, int64_t output_zp, StringRef rounding_mode,
+                   bool scale32);
 
 // Creates TOSA rescale op with int32 output
 Value buildRescaleToInt32(PatternRewriter &rewriter, Operation *op,
                           Value input_val, double input_scale,
                           int64_t input_zp);
+
+// Creates a TOSA rescale op based on conv2d parameters.
+Value buildRescaleOpConvOutput(PatternRewriter &rewriter, Operation *op,
+                               Value conv_val, ShapedType input_type,
+                               ShapedType weight_type, ShapedType output_type);
 
 // Check if scale32 mode is used for given output_element_type
 bool isScale32(mlir::quant::UniformQuantizedType output_element_type);
@@ -100,24 +104,7 @@ LogicalResult getConvOpsAccType(PatternRewriter &rewriter,
 FailureOr<Value> getConvBiasForNoneType(Operation *op,
                                         PatternRewriter &rewriter,
                                         Type inputElemTy, Type outputElemTy,
-                                        int64_t numOutputChannels);
-
-// Emit an explicit zero-valued `tosa.pad` around an NHWC tensor so that later
-// avg_pool lowering can run with `pad = 0`. `padExtents` is ordered as
-// {top, bottom, left, right}. Returns the padded tensor value.
-Value emitExplicitZeroPadNHWC(Location loc, PatternRewriter &rewriter,
-                              Operation *op, Value inputNHWC,
-                              ArrayRef<int64_t> padExtents);
-
-// Get the zero point from a torch.tensor or torch.qtensor value.
-// If the value is a quantized tensor, it extracts the zero point as a
-// scalar integer value. If the value is a float tensor, it returns a
-// constant 0.
-FailureOr<Value> getZeroPointValue(PatternRewriter &rewriter, Operation *op,
-                                   Value tensor, Type elemType);
-
-// Check if a shaped type has any dimension with size 0.
-bool typeHasZeroDim(ShapedType type);
+                                        ArrayRef<int64_t> weightShape);
 
 } // namespace tosa
 } // namespace mlir

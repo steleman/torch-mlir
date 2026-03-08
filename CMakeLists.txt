@@ -60,22 +60,25 @@ if(TORCH_MLIR_ENABLE_TOSA)
   list(APPEND TORCH_MLIR_TABLEGEN_FLAGS "-DTORCH_MLIR_ENABLE_TOSA")
 endif()
 
-option(TORCH_MLIR_OUT_OF_TREE_BUILD "Specifies an out of tree build" OFF)
+option(TORCH_MLIR_OUT_OF_TREE_BUILD "Specifies an out of tree build" ON)
 
 # PyTorch native extension gate. If OFF, then no features which depend on
-# native extensions will be built.TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS is disabled by default.
-# But it will be manually enabled in CI build to enable the jit_ir_importer.build_tools.torch_ods_gen
-# and abstract_interp_lib_gen.py. Once pure python version of build_tools finished, no need to set it in CI.
+# native extensions will be built.TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS is disabled
+# by default.
+# But it will be manually enabled in CI build to enable the
+# jit_ir_importer.build_tools.torch_ods_gen and abstract_interp_lib_gen.py.
+# Once pure python version of build_tools finished, no need to set it in CI.
 option(TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS "Enables PyTorch native extension features" OFF)
 if(TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS)
   add_definitions(-DTORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS)
 endif()
+
 # NOTE: The JIT_IR_IMPORTER paths have become unsupportable due to age and lack of maintainers.
 # Turning this off disables the old TorchScript path, leaving FX based import as the current supported option.
 # The option will be retained for a time, and if a maintainer is interested in setting up testing for it,
 # please reach out on the list and speak up for it. It will only be enabled in CI for test usage.
 cmake_dependent_option(TORCH_MLIR_ENABLE_JIT_IR_IMPORTER "Enables JIT IR Importer" ON TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS OFF)
-cmake_dependent_option(TORCH_MLIR_ENABLE_LTC "Enables LTC backend" OFF TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS OFF)
+cmake_dependent_option(TORCH_MLIR_ENABLE_LTC "Enables LTC backend" OFF TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS ON)
 
 option(TORCH_MLIR_ENABLE_ONNX_C_IMPORTER "Enables the ONNX C importer" OFF)
 
@@ -91,6 +94,27 @@ if(MSVC)
   add_definitions(-D_USE_MATH_DEFINES)
 endif()
 
+if (TORCH_MLIR_ENABLE_ONNX_C_IMPORTER)
+  if (NOT DEFINED ONNX_CMAKE_MODULE_PATH)
+    message(FATAL_ERROR "ONNX_CMAKE_MODULE_PATH is not defined.")
+  endif()
+
+  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${ONNX_CMAKE_MODULE_PATH}/")
+  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
+
+  find_package(Protobuf REQUIRED)
+  find_package(ONNX REQUIRED)
+
+  include(ONNXConfig)
+  add_definitions(-DONNX_NAMESPACE=onnx)
+  add_definitions(-DONNX_ML=1)
+  add_definitions(-DUSE_ML=1)
+
+  if (NOT ONNX_FOUND)
+    message(FATAL_ERROR "Could not find ONNX and ONNX_C_IMPORTER is enabled.")
+  endif()
+endif()
+
 #-------------------------------------------------------------------------------
 # Configure out-of-tree vs in-tree build
 #-------------------------------------------------------------------------------
@@ -103,14 +127,21 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR OR TORCH_MLIR_OUT_OF_TREE_
   # MLIR/LLVM Configuration
   #-------------------------------------------------------------------------------
 
-  find_package(MLIR REQUIRED CONFIG)
+  if (NOT DEFINED MLIR_DIR)
+    message(FATAL_ERROR "Out-of-tree build specified but MLIR_DIR is not set.")
+  endif()
+
+  if (NOT DEFINED LLVM_DIR)
+    message(FATAL_ERROR "Out-of-tree build specified but LLVM_DIR is not set.")
+  endif()
+
   message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
   message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
   set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/bin)
-  set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/lib)
+  set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/lib64)
 
-  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib64)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
   # Define the default arguments to use with 'lit', and an option for the user to
@@ -121,12 +152,31 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR OR TORCH_MLIR_OUT_OF_TREE_
   endif()
   set(LLVM_LIT_ARGS "${LIT_ARGS_DEFAULT}" CACHE STRING "Default options for lit")
 
+  if (NOT DEFINED MLIR_CMAKE_DIR)
+    message(FATAL_ERROR "MLIR_CMAKE_DIR is not set or was not detected.")
+  endif()
+
+  if (NOT DEFINED LLVM_CMAKE_DIR)
+    message(FATAL_ERROR "LLVM_CMAKE_DIR is not set or was not detected.")
+  endif()
+
+  message(STATUS "Using MLIR_CMAKE_DIR in: ${MLIR_CMAKE_DIR}")
+  message(STATUS "Using LLVM_CMAKE_DIR in: ${LLVM_CMAKE_DIR}")
+
   list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
   list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+
+  include(LLVMConfig)
+  include(MLIRConfig)
+  include(LLVMExports)
+  include(MLIRTargets)
   include(TableGen)
   include(AddLLVM)
   include(AddMLIR)
   include(HandleLLVMOptions)
+  include(AddMLIRPython)
+
+  message(STATUS "Using LLVM Version ${LLVM_PACKAGE_VERSION}")
 
   # Don't try to compile the python extensions at the moment. We need
   # to import lots of dependencies from AddMLIRPython to make this work.
@@ -134,6 +184,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR OR TORCH_MLIR_OUT_OF_TREE_
 
   set(TORCH-MLIR_BUILT_STANDALONE ON)
   set(BACKEND_PACKAGE_STRING "LLVM ${LLVM_PACKAGE_VERSION}")
+
+  if (NOT DEFINED TORCH_INCLUDE_DIR)
+    message(FATAL_ERROR "PyTorch include directory is not defined.")
+  else()
+    include_directories(BEFORE ${TORCH_INCLUDE_DIR})
+  endif()
 else()
   message(STATUS "Torch-MLIR in-tree build.")
   # In-tree build with LLVM_EXTERNAL_PROJECTS=torch-mlir

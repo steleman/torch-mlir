@@ -7,6 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PassDetail.h"
+
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -17,7 +19,6 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "torch-mlir-dialects/Dialect/TMTensor/IR/TMTensorDialect.h"
 #include "torch-mlir/Dialect/TorchConversion/IR/TorchConversionOps.h"
@@ -29,14 +30,10 @@ using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::TorchConversion;
 using namespace TMTensor;
-namespace mlir::torch::TorchConversion {
-
-#define GEN_PASS_DEF_VERIFYLINALGONTENSORSBACKENDCONTRACT
-#include "torch-mlir/Dialect/TorchConversion/Transforms/Passes.h.inc"
 
 namespace {
 class VerifyLinalgOnTensorsBackendContractPass
-    : public impl::VerifyLinalgOnTensorsBackendContractBase<
+    : public VerifyLinalgOnTensorsBackendContractBase<
           VerifyLinalgOnTensorsBackendContractPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
@@ -108,8 +105,6 @@ class VerifyLinalgOnTensorsBackendContractPass
 } // namespace
 
 std::unique_ptr<OperationPass<ModuleOp>>
-createVerifyLinalgOnTensorsBackendContractPass() {
+mlir::torch::TorchConversion::createVerifyLinalgOnTensorsBackendContractPass() {
   return std::make_unique<VerifyLinalgOnTensorsBackendContractPass>();
 }
-
-} // namespace mlir::torch::TorchConversion

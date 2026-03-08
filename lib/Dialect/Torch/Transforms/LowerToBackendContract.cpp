@@ -7,9 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "PassDetail.h"
+
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
@@ -24,12 +24,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::Torch {
-
-#define GEN_PASS_DECL_LOWERTOBACKENDCONTRACT
-#define GEN_PASS_DEF_LOWERTOBACKENDCONTRACT
-#define GEN_PASS_DEF_VERIFYBACKENDCONTRACTNODECOMPOSITIONS
-#include "torch-mlir/Dialect/Torch/Transforms/Passes.h.inc"
 
 //===----------------------------------------------------------------------===//
 // Checking the backend contract.
@@ -264,10 +258,19 @@ getBackendContractTarget(MLIRContext *context, bool decompose,
 
 namespace {
 class LowerToBackendContractPass
-    : public impl::LowerToBackendContractBase<LowerToBackendContractPass> {
+    : public LowerToBackendContractBase<LowerToBackendContractPass> {
 public:
-  using impl::LowerToBackendContractBase<
-      LowerToBackendContractPass>::LowerToBackendContractBase;
+  LowerToBackendContractPass() = default;
+  LowerToBackendContractPass(int maxIterations, bool decompose,
+                             bool shapeDtypeRefine,
+                             ArrayRef<std::string> backendLegalOps,
+                             StringRef extraLibrary) {
+    this->maxIterations = maxIterations;
+    this->decompose = decompose;
+    this->shapeDtypeRefine = shapeDtypeRefine;
+    this->backendLegalOps = backendLegalOps;
+    this->extraLibrary = extraLibrary.str();
+  }
   void runOnOperation() override {
     ModuleOp module = getOperation();
     MLIRContext *context = &getContext();
@@ -314,7 +317,7 @@ private:
 };
 
 class VerifyBackendContractNoDecompositionsPass
-    : public impl::VerifyBackendContractNoDecompositionsBase<
+    : public VerifyBackendContractNoDecompositionsBase<
           VerifyBackendContractNoDecompositionsPass> {
 public:
   VerifyBackendContractNoDecompositionsPass() = default;
@@ -333,21 +336,17 @@ public:
 };
 } // namespace
 
-std::unique_ptr<OperationPass<ModuleOp>> createLowerToBackendContractPass(
+std::unique_ptr<OperationPass<ModuleOp>>
+mlir::torch::Torch::createLowerToBackendContractPass(
     int maxIterations, bool decompose, bool shapeDtypeRefine,
     ArrayRef<std::string> backendLegalOps, StringRef extraLibrary) {
-  LowerToBackendContractOptions options;
-  options.maxIterations = maxIterations;
-  options.decompose = decompose;
-  options.shapeDtypeRefine = shapeDtypeRefine;
-  options.backendLegalOps.append(backendLegalOps.begin(),
-                                 backendLegalOps.end());
-  options.extraLibrary = extraLibrary.str();
-  return std::make_unique<LowerToBackendContractPass>(options);
+  return std::make_unique<LowerToBackendContractPass>(
+      maxIterations, decompose, shapeDtypeRefine, backendLegalOps,
+      extraLibrary);
 }
 
 std::unique_ptr<OperationPass<ModuleOp>>
-createVerifyBackendContractNoDecompositionsPass() {
+mlir::torch::Torch::createVerifyBackendContractNoDecompositionsPass() {
   return std::make_unique<VerifyBackendContractNoDecompositionsPass>();
 }
 
@@ -607,5 +606,3 @@ static void markDecomposedOpsAsIllegal(MLIRContext *context,
         return backendLegalOpsSet.contains(opName);
       });
 }
-
-} // namespace mlir::torch::Torch

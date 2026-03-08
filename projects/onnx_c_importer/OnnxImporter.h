@@ -109,24 +109,26 @@ public:
   /// an error will have been set.
   const onnx::TypeProto *FindTypeProtoForName(std::string_view name);
 
-  Dict<std::string_view, const onnx::ValueInfoProto &> &GetInputMap() {
+  Dict<std::string_view, const onnx::ValueInfoProto*> &GetInputMap() {
     return input_map_;
   }
-  const Dict<std::string_view, const onnx::ValueInfoProto &> &
+
+  const Dict<std::string_view, const onnx::ValueInfoProto*> &
   GetInputMap() const {
     return input_map_;
   }
 
-  Dict<std::string_view, const onnx::ValueInfoProto &> &GetOutputMap() {
+  const Dict<std::string_view, const onnx::ValueInfoProto*> &GetOutputMap() {
     return output_map_;
   }
-  const Dict<std::string_view, const onnx::ValueInfoProto &> &
+
+  const Dict<std::string_view, const onnx::ValueInfoProto*> &
   GetOutputMap() const {
     return output_map_;
   }
 
   void InitializerMapEmplace(const std::string_view &name,
-                             const onnx::TensorProto &tp);
+                             const onnx::TensorProto* tp);
   const InitializerMapT &GetInitializerMap() const { return initializer_map_; }
 
 private:
@@ -134,11 +136,10 @@ private:
   const onnx::GraphProto &graph_proto_;
 
   InitializerMapT initializer_map_;
-  Dict<std::string_view, const onnx::ValueInfoProto &> value_info_map_;
-  Dict<std::string_view, const onnx::ValueInfoProto &> declared_input_map_;
-  Dict<std::string_view, const onnx::ValueInfoProto &> output_map_;
-  Dict<std::string_view, const onnx::ValueInfoProto &> input_map_;
-
+  mutable Dict<std::string_view, const onnx::ValueInfoProto*> value_info_map_;
+  mutable Dict<std::string_view, const onnx::ValueInfoProto*> declared_input_map_;
+  mutable Dict<std::string_view, const onnx::ValueInfoProto*> output_map_;
+  mutable Dict<std::string_view, const onnx::ValueInfoProto*> input_map_;
   bool is_top_level_;
 };
 

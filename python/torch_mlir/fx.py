@@ -5,7 +5,6 @@
 
 from typing import Optional, Union, Dict, Tuple, Any, Callable
 from packaging import version
-from dataclasses import dataclass
 
 import warnings
 
@@ -22,16 +21,7 @@ from .compiler_utils import (
     OutputType,
     run_pipeline_with_repro_report,
     lower_mlir_module,
-    BackendLoweringOptions,
 )
-
-
-@dataclass
-class FxImportOptions:
-    """Options for FX graph import and lowering."""
-
-    extra_library_file_name: Optional[str] = None
-    backend_legal_ops: Optional[list[str]] = None
 
 
 def _module_lowering(
@@ -39,16 +29,9 @@ def _module_lowering(
     enable_ir_printing,
     output_type,
     torch_mod,
-    fx_import_options: Optional[FxImportOptions] = None,
-    backend_options: Optional[BackendLoweringOptions] = None,
+    extra_library_file_name=None,
+    backend_legal_ops=None,
 ):
-
-    if fx_import_options is None:
-        fx_import_options = FxImportOptions()
-
-    if backend_options is None:
-        backend_options = BackendLoweringOptions()
-
     if verbose:
         print("\n====================")
         print("TorchFX IR")
@@ -59,16 +42,14 @@ def _module_lowering(
     # TODO: pass extra_library_file_name by caller
 
     backend_legal_op_arg_str = ""
-    if fx_import_options.backend_legal_ops is not None:
-        if not len(fx_import_options.backend_legal_ops) == 0:
+    if backend_legal_ops is not None:
+        if not len(backend_legal_ops) == 0:
             backend_legal_op_arg_str = "backend-legal-ops=" + ",".join(
-                fx_import_options.backend_legal_ops
+                backend_legal_ops
             )
 
-    if fx_import_options.extra_library_file_name is None:
+    if extra_library_file_name is None:
         extra_library_file_name = ""
-    else:
-        extra_library_file_name = fx_import_options.extra_library_file_name
     option_string = (
         "{"
         + backend_legal_op_arg_str
@@ -83,7 +64,7 @@ def _module_lowering(
         "Lowering TorchFX IR -> Torch Backend IR",
         enable_ir_printing=enable_ir_printing,
     )
-    return lower_mlir_module(verbose, output_type, torch_mod, backend_options)
+    return lower_mlir_module(verbose, output_type, torch_mod)
 
 
 def export_and_import(
@@ -102,7 +83,6 @@ def export_and_import(
     verbose: bool = False,
     enable_ir_printing: bool = False,
     backend_legal_ops: Optional[list[str]] = None,
-    allow_non_finites: bool = True,
     **kwargs,
 ):
     context = ir.Context()
@@ -141,16 +121,12 @@ def export_and_import(
             import_symbolic_shape_expressions=import_symbolic_shape_expressions,
         )
 
-    fx_import_options = FxImportOptions(backend_legal_ops=backend_legal_ops)
-    backend_options = BackendLoweringOptions(allow_non_finites=allow_non_finites)
-
     return _module_lowering(
         verbose,
         enable_ir_printing,
         OutputType.get(output_type),
         fx_importer.module,
-        fx_import_options=fx_import_options,
-        backend_options=backend_options,
+        backend_legal_ops=backend_legal_ops,
     )
 
 
@@ -164,7 +140,6 @@ def stateless_fx_import(
     verbose: bool = False,
     enable_ir_printing: bool = False,
     backend_legal_ops: Optional[list[str]] = None,
-    allow_non_finites: bool = True,
 ):
     if enable_graph_printing:
         gm.print_readable()
@@ -173,15 +148,10 @@ def stateless_fx_import(
     if fx_importer is None:
         fx_importer = FxImporter(context=context, hooks=hooks)
     fx_importer.import_stateless_graph(gm.graph, func_name=model_name)
-
-    fx_import_options = FxImportOptions(backend_legal_ops=backend_legal_ops)
-    backend_options = BackendLoweringOptions(allow_non_finites=allow_non_finites)
-
     return _module_lowering(
         verbose,
         enable_ir_printing,
         OutputType.get(output_type),
         fx_importer.module,
-        fx_import_options=fx_import_options,
-        backend_options=backend_options,
+        backend_legal_ops=backend_legal_ops,
     )

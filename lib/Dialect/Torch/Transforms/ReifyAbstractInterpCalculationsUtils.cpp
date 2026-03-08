@@ -35,9 +35,9 @@ static Operation *createCalculateOp(OpBuilder &b, Location loc,
                                     TypeRange resultTypes,
                                     LibraryFunctionKind libFuncKind) {
   if (libFuncKind == LibraryFunctionKind::ShapeFunction)
-    return ShapeCalculateOp::create(b, loc, resultTypes);
+    return b.create<ShapeCalculateOp>(loc, resultTypes);
   else if (libFuncKind == LibraryFunctionKind::DtypeFunction)
-    return DtypeCalculateOp::create(b, loc, resultTypes);
+    return b.create<DtypeCalculateOp>(loc, resultTypes);
   llvm_unreachable(
       "`createCalculateOp` called with an unsupported `LibraryFunctionKind`");
 }
@@ -46,9 +46,9 @@ static Operation *createCalculateYieldOp(OpBuilder &b, Location loc,
                                          ValueRange results,
                                          LibraryFunctionKind libFuncKind) {
   if (libFuncKind == LibraryFunctionKind::ShapeFunction)
-    return ShapeCalculateYieldOp::create(b, loc, results);
+    return b.create<ShapeCalculateYieldOp>(loc, results);
   else if (libFuncKind == LibraryFunctionKind::DtypeFunction)
-    return DtypeCalculateYieldOp::create(b, loc, results);
+    return b.create<DtypeCalculateYieldOp>(loc, results);
   llvm_unreachable("`createCalculateYieldOp` called with an unsupported "
                    "`LibraryFunctionKind`");
 }
@@ -58,9 +58,9 @@ createCalculateYieldCalculationOp(OpBuilder &b, Location loc,
                                   ValueRange results,
                                   LibraryFunctionKind libFuncKind) {
   if (libFuncKind == LibraryFunctionKind::ShapeFunction)
-    return ShapeCalculateYieldShapesOp::create(b, loc, results);
+    return b.create<ShapeCalculateYieldShapesOp>(loc, results);
   else if (libFuncKind == LibraryFunctionKind::DtypeFunction)
-    return DtypeCalculateYieldDtypesOp::create(b, loc, results);
+    return b.create<DtypeCalculateYieldDtypesOp>(loc, results);
   llvm_unreachable("`createCalculateYieldCalculationOp` called with an "
                    "unsupported `LibraryFunctionKind`");
 }
@@ -110,7 +110,7 @@ LogicalResult Torch::wrapWithCalculateOpIfLibraryFunctionAvailable(
         libFuncArgsBuilder(b, loc, op->getOperands(), libFunc);
     if (failed(libFuncArgs))
       return failure();
-    auto call = mlir::func::CallOp::create(b, loc, libFunc, *libFuncArgs);
+    auto call = b.create<mlir::func::CallOp>(loc, libFunc, *libFuncArgs);
 
     // Python models multiple results with a tuple, so we need to unpack it
     // if the op has multiple results.
@@ -119,8 +119,8 @@ LogicalResult Torch::wrapWithCalculateOpIfLibraryFunctionAvailable(
            "Multiple results are packed in a tuple in Python!");
     Value result = call.getResult(0);
     if (auto tupleType = dyn_cast<Torch::TupleType>(result.getType())) {
-      auto unpack = PrimTupleUnpackOp::create(
-          b, loc, tupleType.getContainedTypes(), result);
+      auto unpack = b.create<PrimTupleUnpackOp>(
+          loc, tupleType.getContainedTypes(), result);
       llvm::append_range(unpackedResults, unpack.getResults());
     } else {
       unpackedResults.push_back(result);
@@ -175,14 +175,14 @@ Torch::adjustFunctionArg(OpBuilder &b, Location loc, Value operand,
     // compile a function with Generator type arguments.
     // Ignoring that hack, this is a correct handling of Any type should we need
     // to actually support it in the future.
-    return DerefineOp::create(b, loc, desiredType, operand).getResult();
+    return b.create<DerefineOp>(loc, desiredType, operand).getResult();
   }
 
   // The type `!torch.number` can be an `int`, `float`, or `complex`.
   // TODO: Add a new type `Torch::ComplexType` to handle the complex case.
   if (isa<Torch::NumberType>(desiredType) &&
       isa<Torch::IntType, Torch::FloatType>(operandType)) {
-    return DerefineOp::create(b, loc, desiredType, operand).getResult();
+    return b.create<DerefineOp>(loc, desiredType, operand).getResult();
   }
 
   // !torch.union<int, float, none> is the type used for optional
@@ -194,7 +194,7 @@ Torch::adjustFunctionArg(OpBuilder &b, Location loc, Value operand,
           return isa<Torch::IntType, Torch::FloatType, Torch::NoneType>(
               containedType);
         }))
-      return DerefineOp::create(b, loc, desiredType, operand).getResult();
+      return b.create<DerefineOp>(loc, desiredType, operand).getResult();
   }
 
   // Operands with type `!torch.none` correspond to library function inputs with
@@ -203,7 +203,7 @@ Torch::adjustFunctionArg(OpBuilder &b, Location loc, Value operand,
   if (isa<Torch::NoneType>(operandType)) {
     assert(!isa<Torch::NoneType>(desiredType) &&
            "Don't expect library functions to have NoneType parameters");
-    return DerefineOp::create(b, loc, desiredType, operand).getResult();
+    return b.create<DerefineOp>(loc, desiredType, operand).getResult();
   }
 
   // To keep things simple in shape functions, `Scalar` inputs are considered
@@ -213,7 +213,7 @@ Torch::adjustFunctionArg(OpBuilder &b, Location loc, Value operand,
   // into the IR.
   if (isa<Torch::NumberType>(operandType) &&
       isa<Torch::FloatType>(desiredType)) {
-    return AtenFloatScalarOp::create(b, loc, desiredType, operand).getResult();
+    return b.create<AtenFloatScalarOp>(loc, desiredType, operand).getResult();
   }
 
   // If the operand type is statically !torch.optional, then we need to do
@@ -230,25 +230,25 @@ Torch::adjustFunctionArg(OpBuilder &b, Location loc, Value operand,
       //     return derefine(None)
       // else:
       //     return adjust(unchecked_cast(optional))
-      auto none = ConstantNoneOp::create(b, loc);
-      auto isNone = Aten__Is__Op::create(b, loc, operand, none);
-      auto primIf = PrimIfOp::create(b, loc, desiredType, isNone);
+      auto none = b.create<ConstantNoneOp>(loc);
+      auto isNone = b.create<Aten__Is__Op>(loc, operand, none);
+      auto primIf = b.create<PrimIfOp>(loc, desiredType, isNone);
       {
         Region &thenRegion = primIf.getThenRegion();
         b.createBlock(&thenRegion, thenRegion.end());
-        auto derefineNone = DerefineOp::create(b, loc, desiredType, none);
-        PrimIfYieldOp::create(b, loc, ValueRange{derefineNone});
+        auto derefineNone = b.create<DerefineOp>(loc, desiredType, none);
+        b.create<PrimIfYieldOp>(loc, ValueRange{derefineNone});
       }
       {
         Region &elseRegion = primIf.getElseRegion();
         b.createBlock(&elseRegion, elseRegion.end());
-        auto downcasted = PrimUncheckedCastOp::create(
-            b, loc, operandOptionalType.getContainedType(), operand);
+        auto downcasted = b.create<PrimUncheckedCastOp>(
+            loc, operandOptionalType.getContainedType(), operand);
         FailureOr<Value> adjusted = adjustFunctionArg(
             b, loc, downcasted, desiredType, baseTransformation);
         if (failed(adjusted))
           return failure();
-        PrimIfYieldOp::create(b, loc, *adjusted);
+        b.create<PrimIfYieldOp>(loc, *adjusted);
       }
       b.setInsertionPointAfter(primIf);
       return primIf.getResult(0);
@@ -264,7 +264,7 @@ Torch::adjustFunctionArg(OpBuilder &b, Location loc, Value operand,
         baseTransformation);
     if (failed(adjusted))
       return failure();
-    return DerefineOp::create(b, loc, desiredType, *adjusted).getResult();
+    return b.create<DerefineOp>(loc, desiredType, *adjusted).getResult();
   }
 
   if (auto desiredListType = dyn_cast<Torch::ListType>(desiredType)) {
@@ -277,13 +277,13 @@ Torch::adjustFunctionArg(OpBuilder &b, Location loc, Value operand,
     // return adjusted_list
     auto providedType = cast<Torch::ListType>(operand.getType());
     Value adjustedList =
-        PrimListConstructOp::create(b, loc, desiredListType, ValueRange({}));
+        b.create<PrimListConstructOp>(loc, desiredListType, ValueRange({}));
     // Create a for-like PrimLoopOp.
-    Value maxTripCount = AtenLenTOp::create(b, loc, operand);
-    Value cTrue = Torch::ConstantBoolOp::create(b, loc, true);
-    auto loop = PrimLoopOp::create(b, loc, TypeRange({}), maxTripCount,
-                                   /*initialCondition=*/cTrue,
-                                   /*iterArgsInit=*/ValueRange({}));
+    Value maxTripCount = b.create<AtenLenTOp>(loc, operand);
+    Value cTrue = b.create<Torch::ConstantBoolOp>(loc, true);
+    auto loop = b.create<PrimLoopOp>(loc, TypeRange({}), maxTripCount,
+                                     /*initialCondition=*/cTrue,
+                                     /*iterArgsInit=*/ValueRange({}));
 
     // Create the loop body.
     {
@@ -292,17 +292,17 @@ Torch::adjustFunctionArg(OpBuilder &b, Location loc, Value operand,
           b.createBlock(&loop.getRegion(), loop.getRegion().begin(),
                         TypeRange({b.getType<Torch::IntType>()}), {loc});
       Value iterationNumber = body->getArgument(0);
-      Value element = Aten__Getitem__TOp::create(
-          b, loc, providedType.getContainedType(), operand, iterationNumber);
+      Value element = b.create<Aten__Getitem__TOp>(
+          loc, providedType.getContainedType(), operand, iterationNumber);
       FailureOr<Value> adjustedElement =
           adjustFunctionArg(b, loc, element, desiredListType.getContainedType(),
                             baseTransformation);
       if (failed(adjustedElement))
         return failure();
-      AtenAppendTOp::create(b, loc, adjustedList.getType(), adjustedList,
-                            *adjustedElement);
-      PrimLoopConditionOp::create(b, loc, /*shouldContinue=*/cTrue,
-                                  /*iterArgs=*/ValueRange({}));
+      b.create<AtenAppendTOp>(loc, adjustedList.getType(), adjustedList,
+                              *adjustedElement);
+      b.create<PrimLoopConditionOp>(loc, /*shouldContinue=*/cTrue,
+                                    /*iterArgs=*/ValueRange({}));
     }
 
     return adjustedList;
@@ -313,7 +313,7 @@ Torch::adjustFunctionArg(OpBuilder &b, Location loc, Value operand,
   // explanation).
   if (isa<Torch::FloatType>(desiredType) &&
       isa<Torch::IntType>(operand.getType())) {
-    return AtenFloatScalarOp::create(b, loc, desiredType, operand).getResult();
+    return b.create<AtenFloatScalarOp>(loc, desiredType, operand).getResult();
   }
 
   // Pass the operand as-is.

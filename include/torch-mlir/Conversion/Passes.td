@@ -103,11 +103,6 @@ def ConvertTorchToLinalg : Pass<"convert-torch-to-linalg", "func::FuncOp"> {
     compelling for modeling effects more broadly.
   }];
   let constructor = "mlir::torch::createConvertTorchToLinalgPass()";
-  let options = [
-    Option<"allowNonFinites", "allow-non-finites",
-            "bool", /*default=*/"true",
-            "When enabled (default), some ops may emit non-finites, for example, max pooling may compare values to an initial value of `-inf`. When disabled, non-finites will be replaced with the closest finite value for a given dtype.">,
-  ];
 }
 
 def ConvertTorchToTensor : Pass<"convert-torch-to-tensor", "func::FuncOp"> {
@@ -133,12 +128,6 @@ def ConvertTorchToTosa : Pass<"convert-torch-to-tosa", "func::FuncOp"> {
             "bool", /*default=*/"true",
             "Require TorchToTosa full conversion by adding Torch Dialect to "
             "TorchToTosa list of illegal dialects">,
-    ListOption<"disabledPatterns", "disabled-patterns",
-               "std::string",
-               "Patterns to disable by name during Torch to TOSA conversion">,
-    ListOption<"enabledPatterns", "enabled-patterns",
-               "std::string",
-               "If non-empty, only these patterns are enabled during Torch to TOSA conversion">,
   ];
 }
 #endif
@@ -152,11 +141,6 @@ def ConvertTorchToTMTensor : Pass<"convert-torch-to-tmtensor", "func::FuncOp"> {
     pass also makes use of TMTensor Dialect, which the former one doesn't.
   }];
   let constructor = "mlir::torch::createConvertTorchToTMTensorPass()";
-  let options = [
-    Option<"allowNonFinites", "allow-non-finites",
-            "bool", /*default=*/"true",
-            "When enabled (default), some ops may emit non-finites, for example, max pooling may compare values to an initial value of `-inf`. When disabled, non-finites will be replaced with the closest finite value for a given dtype.">,
-  ];
 }
 
 def ConvertTorchConversionToMLProgram : Pass<"convert-torch-conversion-to-mlprogram", "ModuleOp"> {
@@ -184,9 +168,6 @@ def ConvertTorchToStablehlo : Pass<"convert-torch-to-stablehlo", "func::FuncOp">
     // are unlikely to exceed the range of i32(4GiB)
     Option<"enableI32Index", "enable-i32-index", "bool", /*default=*/"false",
            "Enable truncate index from i64 to i32(unsafely)">,
-    Option<"allowNonFinites", "allow-non-finites",
-            "bool", /*default=*/"true",
-            "When enabled (default), some ops may emit non-finites, for example, max pooling may compare values to an initial value of `-inf`. When disabled, non-finites will be replaced with the closest finite value for a given dtype.">,
   ];
 }
 #endif

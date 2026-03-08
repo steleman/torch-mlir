@@ -44,8 +44,7 @@ namespace reg {
 
 void mlir::torch::registerTorchConversionPasses() {
   reg::registerPasses();
-  mlir::PassPipelineRegistration<
-      TorchConversion::LinalgOnTensorsBackendPipelineOptions>(
+  mlir::PassPipelineRegistration<>(
       "torch-backend-to-linalg-on-tensors-backend-pipeline",
       "Pipeline lowering torch backend contract to linalg-on-tensors backend "
       "contract.",
@@ -68,8 +67,7 @@ void mlir::torch::registerTorchConversionPasses() {
 }
 
 void TorchConversion::createTorchBackendToLinalgOnTensorsBackendPipeline(
-    OpPassManager &pm,
-    const TorchConversion::LinalgOnTensorsBackendPipelineOptions &options) {
+    OpPassManager &pm) {
   // Fix non constant dims passed to reduction ops
   pm.addNestedPass<func::FuncOp>(
       torch::Torch::createRestructureNonConstantAxesPass());
@@ -81,11 +79,9 @@ void TorchConversion::createTorchBackendToLinalgOnTensorsBackendPipeline(
   // We do this first as it tends to involve pattern-matching against constants,
   // (e.g. dimensions which must be constant in a ranked programming model)
   // and those constants get somewhat obscured by TorchToArith.
-  pm.addNestedPass<func::FuncOp>(
-      createConvertTorchToTMTensorPass(options.allowNonFinites));
+  pm.addNestedPass<func::FuncOp>(createConvertTorchToTMTensorPass());
   pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
-  pm.addNestedPass<func::FuncOp>(
-      createConvertTorchToLinalgPass(options.allowNonFinites));
+  pm.addNestedPass<func::FuncOp>(createConvertTorchToLinalgPass());
   pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
   pm.addNestedPass<func::FuncOp>(createConvertTorchToSCFPass());
   pm.addNestedPass<func::FuncOp>(createConvertTorchToArithPass());
@@ -119,14 +115,8 @@ void TorchConversion::createTorchBackendToLinalgOnTensorsBackendPipeline(
 void TorchConversion::createTorchBackendToTosaBackendPipeline(
     OpPassManager &pm,
     const TorchConversion::TosaBackendPipelineOptions &options) {
-
-  // We want to fuse quantized operations together before lowering to tosa.
-  pm.addNestedPass<func::FuncOp>(Torch::createFuseQuantizedOpsPass());
-
-  pm.addNestedPass<func::FuncOp>(createConvertTorchToTosaPass(
-      options.requireFullTosaConversion, options.disabledPatterns,
-      options.enabledPatterns));
-
+  pm.addNestedPass<func::FuncOp>(
+      createConvertTorchToTosaPass(options.requireFullTosaConversion));
   // Fold full-layer operations on TOSA constants
   pm.addNestedPass<func::FuncOp>(createTosaLayerwiseConstantFoldPass());
 
@@ -161,8 +151,7 @@ void TorchConversion::createTorchBackendToStablehloBackendPipeline(
     const TorchConversion::StablehloBackendPipelineOptions &options) {
   // Generate Stablehlo & Chlo ops.
   pm.addNestedPass<func::FuncOp>(createConvertTorchToStablehloPass(
-      options.enableStaticShape, options.enableI32Index,
-      options.allowNonFinites));
+      options.enableStaticShape, options.enableI32Index));
   // Lowering Chlo ops to Stablehlo
   pm.addNestedPass<func::FuncOp>(
       stablehlo::createChloLegalizeToStablehloPass());

@@ -84,6 +84,7 @@ declare_mlir_python_extension(TorchMLIRPythonExtensions.Main
 # testing.
 ################################################################################
 
+if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
 set(_source_components
   # TODO: Core is now implicitly building/registering all dialects, increasing
   # build burden by ~5x. Make it stop.
@@ -98,6 +99,12 @@ set(_source_components
   TorchMLIRPythonExtensions
   TorchMLIRSiteInitialize
 )
+else()
+  set(_source_components
+    TorchMLIRPythonSources
+    TorchMLIRPythonExtensions
+    TorchMLIRPythonTorchExtensionsSources)
+endif()
 
 if(TORCH_MLIR_ENABLE_STABLEHLO)
   list(APPEND _source_components StablehloPythonExtensions)
@@ -126,10 +133,3 @@ add_mlir_python_modules(TorchMLIRPythonModules
 )
 
 add_dependencies(TorchMLIRPythonModules torch-mlir-opt)
-
-# Some optional PyTorch-extension backed modules are built outside of the
-# AddMLIRPython `declare_mlir_python_extension()` flow, but are still expected to
-# be present in the python package when enabled.
-if(TORCH_MLIR_ENABLE_JIT_IR_IMPORTER)
-  add_dependencies(TorchMLIRPythonModules TorchMLIRJITIRImporterPybind)
-endif()

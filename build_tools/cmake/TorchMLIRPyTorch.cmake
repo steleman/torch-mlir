@@ -61,7 +61,7 @@ function(TorchMLIRConfigurePyTorch)
     # Check dual ABI setting first
     execute_process(
       COMMAND ${Python3_EXECUTABLE}
-      -c "import torch; import sys; sys.stdout.write('1' if torch.compiled_with_cxx11_abi() else '0')"
+      -c "import torch; import sys; sys.stdout.write('0' if torch.compiled_with_cxx11_abi() else '0')"
       RESULT_VARIABLE _result
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       OUTPUT_VARIABLE _use_cxx11_abi)
@@ -87,9 +87,9 @@ function(TorchMLIRConfigurePyTorch)
       message(STATUS "PyTorch C++ ABI version: \"${_cxx_abi_version}\"")
       # Specialize compile flags for compiler
       if(${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
-        set(TORCH_CXXFLAGS "-D_GLIBCXX_USE_CXX11_ABI=${_use_cxx11_abi} -fabi-version=${_cxx_abi_version}")
+        set(TORCH_CXXFLAGS "${CMAKE_CXX_FLAGS}")
       elseif(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
-        set(TORCH_CXXFLAGS "-D_GLIBCXX_USE_CXX11_ABI=${_use_cxx11_abi} -U__GXX_ABI_VERSION -D__GXX_ABI_VERSION=10${_cxx_abi_version} '-DPYBIND11_COMPILER_TYPE=\"_gcc\"'")
+        set(TORCH_CXXFLAGS "${CMAKE_CXX_FLAGS} -DPYBIND11_COMPILER_TYPE=\"_gcc\"")
       else()
         message(WARNING "Unrecognized compiler. Cannot determine ABI flags.")
         return()

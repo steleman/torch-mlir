@@ -7,8 +7,7 @@ from io import StringIO
 import os
 import sys
 import tempfile
-from typing import Union, List, Optional
-from dataclasses import dataclass, field
+from typing import Union, List
 
 import torch
 from .passmanager import PassManager
@@ -75,14 +74,6 @@ def get_module_name_for_debug_dump(module):
 
 class TorchMlirCompilerError(Exception):
     pass
-
-
-@dataclass
-class BackendLoweringOptions:
-    """Options for lowering Torch IR to TOSA/Linalg/StableHLO Backend IR."""
-
-    """Whether to support non-finite floating point values (inf, nan)."""
-    allow_non_finites: bool = True
 
 
 def run_pipeline_with_repro_report(
@@ -188,11 +179,7 @@ class OutputType(Enum):
         return OutputType[spec]
 
 
-def lower_mlir_module(verbose, output_type, module, backend_options=None):
-
-    if backend_options is None:
-        backend_options = BackendLoweringOptions()
-
+def lower_mlir_module(verbose, output_type, module):
     if verbose:
         print("\n====================")
         print("Torch Backend IR")
@@ -214,10 +201,9 @@ def lower_mlir_module(verbose, output_type, module, backend_options=None):
         return module
 
     if output_type == OutputType.LINALG_ON_TENSORS:
-        pipeline = f"builtin.module(torch-backend-to-linalg-on-tensors-backend-pipeline{{allow-non-finites={backend_options.allow_non_finites}}})"
         run_pipeline_with_repro_report(
             module,
-            pipeline,
+            "builtin.module(torch-backend-to-linalg-on-tensors-backend-pipeline)",
             "Lowering Torch Backend IR -> Linalg-on-Tensors Backend IR",
         )
         if verbose:
@@ -227,10 +213,9 @@ def lower_mlir_module(verbose, output_type, module, backend_options=None):
         return module
 
     elif output_type == OutputType.STABLEHLO:
-        pipeline = f"builtin.module(torch-backend-to-stablehlo-backend-pipeline{{allow-non-finites={backend_options.allow_non_finites}}})"
         run_pipeline_with_repro_report(
             module,
-            pipeline,
+            "builtin.module(torch-backend-to-stablehlo-backend-pipeline)",
             "Lowering Torch Backend IR -> StableHLO Backend IR",
         )
         if verbose:

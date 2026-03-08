@@ -21,22 +21,10 @@ class ModuleOp;
 
 namespace torch {
 namespace TorchConversion {
-struct LinalgOnTensorsBackendPipelineOptions
-    : public PassPipelineOptions<LinalgOnTensorsBackendPipelineOptions> {
-  Option<bool> allowNonFinites{
-      *this, "allow-non-finites",
-      llvm::cl::desc(
-          "When enabled (default), some ops may emit non-finites, for example, "
-          "max pooling may compare values to an initial value of `-inf`. When "
-          "disabled, non-finites will be replaced with the closest finite "
-          "value for a given dtype."),
-      llvm::cl::init(true)};
-};
 
 /// Creates a pipeline that lowers from the torch backend contract to the
 /// linalg-on-tensors backend contract.
-void createTorchBackendToLinalgOnTensorsBackendPipeline(
-    OpPassManager &pm, const LinalgOnTensorsBackendPipelineOptions &options);
+void createTorchBackendToLinalgOnTensorsBackendPipeline(OpPassManager &pm);
 
 // Do not register the TOSA options if the TOSA target is disabled
 #ifdef TORCH_MLIR_ENABLE_TOSA
@@ -47,16 +35,6 @@ struct TosaBackendPipelineOptions
       llvm::cl::desc("Require full TorchToTosa conversion by adding Torch "
                      "Dialect to TorchToTosa list of illegal dialects"),
       llvm::cl::init(true)};
-  ListOption<std::string> disabledPatterns{
-      *this, "disabled-patterns",
-      ::llvm::cl::desc(
-          "Patterns to disable by name during Torch to TOSA conversion"),
-      llvm::cl::ZeroOrMore};
-  ListOption<std::string> enabledPatterns{
-      *this, "enabled-patterns",
-      ::llvm::cl::desc("If non-empty, only these patterns are enabled during "
-                       "Torch to TOSA conversion"),
-      llvm::cl::ZeroOrMore};
 };
 
 /// Creates a pipeline that lowers from the torch backend contract to the
@@ -81,14 +59,6 @@ struct StablehloBackendPipelineOptions
       *this, "enable-i32-index",
       llvm::cl::desc("Enable truncate index from i64 to i32(unsafely)"),
       llvm::cl::init(false)};
-  Option<bool> allowNonFinites{
-      *this, "allow-non-finites",
-      llvm::cl::desc(
-          "When enabled (default), some ops may emit non-finites, for example, "
-          "max pooling may compare values to an initial value of `-inf`. When "
-          "disabled, non-finites will be replaced with the closest finite "
-          "value for a given dtype."),
-      llvm::cl::init(true)};
 };
 
 void createTorchBackendToStablehloBackendPipeline(

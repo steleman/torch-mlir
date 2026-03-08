@@ -25,7 +25,10 @@ function(_add_dialect)
   mlir_tablegen(TMTensorDialect.h.inc -gen-dialect-decls -dialect=tm_tensor)
   mlir_tablegen(TMTensorDialect.cpp.inc -gen-dialect-defs -dialect=tm_tensor)
   add_public_tablegen_target(TorchMLIRTMTensorOpsIncGen)
+
+  if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
   add_dependencies(mlir-headers TorchMLIRTMTensorOpsIncGen)
+  endif()
 endfunction()
 
 _add_dialect()

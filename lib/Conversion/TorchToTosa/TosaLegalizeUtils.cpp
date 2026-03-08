@@ -11,8 +11,6 @@
 #include "mlir/Dialect/Tosa/IR/TosaOps.h" // from @llvm-project
 #include "mlir/Dialect/Tosa/Utils/ConversionUtils.h"
 #include "mlir/Dialect/Tosa/Utils/QuantUtils.h" // from @llvm-project
-#include "torch-mlir/Conversion/Utils/Utils.h"
-#include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
 #include "llvm/ADT/ArrayRef.h"
 
 namespace mlir {
@@ -37,8 +35,8 @@ Value buildRescaleMultiplier(bool scale32, PatternRewriter &rewriter,
 // rounding mode
 Value buildRescale(PatternRewriter &rewriter, Operation *op,
                    ShapedType output_type, Value input_val, double scale,
-                   int64_t input_zp, int64_t output_zp,
-                   tosa::RoundingMode rounding_mode, bool scale32) {
+                   int64_t input_zp, int64_t output_zp, StringRef rounding_mode,
+                   bool scale32) {
   int32_t multiplier;
   int32_t shift;
 
@@ -72,8 +70,7 @@ Value buildRescale(PatternRewriter &rewriter, Operation *op,
   auto rescale_op = CreateOpAndInfer<tosa::RescaleOp>(
       rewriter, op->getLoc(), output_type, input_val, multiplier_val, shift_val,
       input_zp_val.value(), output_zp_val.value(),
-      rewriter.getBoolAttr(scale32),
-      tosa::RoundingModeAttr::get(rewriter.getContext(), rounding_mode),
+      rewriter.getBoolAttr(scale32), rewriter.getStringAttr(rounding_mode),
       rewriter.getBoolAttr(false), rewriter.getBoolAttr(input_unsigned),
       rewriter.getBoolAttr(output_unsigned));
 
@@ -90,7 +87,117 @@ Value buildRescaleToInt32(PatternRewriter &rewriter, Operation *op,
   auto output_type = input_type.clone(rewriter.getI32Type());
 
   return buildRescale(rewriter, op, output_type, input_val, input_scale,
-                      input_zp, 0, tosa::RoundingMode::SINGLE_ROUND, true);
+                      input_zp, 0, "SINGLE_ROUND", true);
+}
+
+// Creates a TOSA rescale op based on conv2d parameters.
+Value buildRescaleOpConvOutput(PatternRewriter &rewriter, Operation *op,
+                               Value conv_val, ShapedType input_type,
+                               ShapedType weight_type, ShapedType output_type) {
+  auto input_qtype =
+      dyn_cast<mlir::quant::UniformQuantizedType>(input_type.getElementType());
+  auto output_qtype =
+      dyn_cast<mlir::quant::UniformQuantizedType>(output_type.getElementType());
+
+  double input_scale = input_qtype.getScale();
+
+  int64_t output_zp = output_qtype.getZeroPoint();
+  double output_scale = output_qtype.getScale();
+
+  bool scale32 = isScale32(output_qtype);
+  int32_t scale_width = scale32 ? 32 : 16;
+
+  bool input_unsigned = input_qtype.isUnsignedInteger();
+  bool output_unsigned = output_qtype.isUnsignedInteger();
+
+  const auto input_zp_val = tosa::createZeroPointTensor(
+      rewriter, op->getLoc(), input_type, static_cast<int64_t>(0));
+  if (!input_zp_val.has_value())
+    op->emitError("Failed to create input zero-point tensor for RescaleOp.");
+
+  const auto output_zp_val = tosa::createZeroPointTensor(
+      rewriter, op->getLoc(), output_type, output_zp);
+  if (!output_zp_val.has_value())
+    op->emitError("Failed to create output zero-point tensor for RescaleOp.");
+
+  if (auto weight_per_tensor_qtype =
+          dyn_cast<mlir::quant::UniformQuantizedType>(
+              weight_type.getElementType())) {
+    // Per-tensor quantization
+    double weight_scale = weight_per_tensor_qtype.getScale();
+
+    int32_t multiplier;
+    int32_t shift;
+
+    double op_tensor_scale = (input_scale * weight_scale) / output_scale;
+
+    if (!computeMultiplierAndShift(op_tensor_scale, multiplier, shift,
+                                   scale_width))
+      op->emitError(
+          "buildRescaleOpConvOutput: shift must be in the range 2 <= shift <= "
+          "62");
+
+    Value multiplier_val =
+        buildRescaleMultiplier(scale32, rewriter, op, {multiplier});
+    auto shift_val = tosa::getConstTensor<int8_t>(
+                         rewriter, op, {static_cast<int8_t>(shift)}, {1})
+                         .value();
+
+    auto rescale_op = CreateOpAndInfer<tosa::RescaleOp>(
+        rewriter, op->getLoc(), output_type, conv_val, multiplier_val,
+        shift_val, input_zp_val.value(), output_zp_val.value(),
+        rewriter.getBoolAttr(scale32), rewriter.getStringAttr("DOUBLE_ROUND"),
+        rewriter.getBoolAttr(false), rewriter.getBoolAttr(input_unsigned),
+        rewriter.getBoolAttr(output_unsigned));
+
+    return rescale_op.getResult();
+
+  } else if (auto weight_per_channel_qtype =
+                 dyn_cast<mlir::quant::UniformQuantizedPerAxisType>(
+                     weight_type.getElementType())) {
+    // Per-channel quantization
+    SmallVector<int32_t> multiplier_arr;
+    SmallVector<int8_t> shift_arr;
+
+    SmallVector<double> weight_scale_arr(
+        weight_per_channel_qtype.getScales().begin(),
+        weight_per_channel_qtype.getScales().end());
+
+    for (double weight_scale : weight_scale_arr) {
+      int32_t multiplier;
+      int32_t shift;
+
+      double op_channel_scale = (input_scale * weight_scale) / output_scale;
+
+      if (!computeMultiplierAndShift(op_channel_scale, multiplier, shift, 32))
+        op->emitError(
+            "buildRescaleOpConvOutput: shift must be in the range 2 <= shift "
+            "<= 62");
+
+      multiplier_arr.push_back(multiplier);
+      shift_arr.push_back(static_cast<int8_t>(shift));
+    }
+
+    Value multiplier_val =
+        buildRescaleMultiplier(scale32, rewriter, op, multiplier_arr);
+    auto shift_val =
+        tosa::getConstTensor<int8_t>(rewriter, op, shift_arr,
+                                     {static_cast<int64_t>(shift_arr.size())})
+            .value();
+
+    auto rescale_op = CreateOpAndInfer<tosa::RescaleOp>(
+        rewriter, op->getLoc(), output_type, conv_val, multiplier_val,
+        shift_val, input_zp_val.value(), output_zp_val.value(),
+        rewriter.getBoolAttr(scale32), rewriter.getStringAttr("DOUBLE_ROUND"),
+        rewriter.getBoolAttr(true), rewriter.getBoolAttr(input_unsigned),
+        rewriter.getBoolAttr(output_unsigned));
+
+    return rescale_op.getResult();
+
+  } else {
+    op->emitOpError("buildConvRescaleOp: unknown weight quantized type");
+    return nullptr;
+  }
 }
 
 // Check if scale32 mode is used for given output_element_type
@@ -105,7 +212,7 @@ Value getTosaConstTensorSingleF32(PatternRewriter &rewriter, Operation *op,
   auto const_attr = DenseElementsAttr::get(const_type, val);
 
   auto const_op =
-      tosa::ConstOp::create(rewriter, op->getLoc(), const_type, const_attr);
+      rewriter.create<tosa::ConstOp>(op->getLoc(), const_type, const_attr);
   return const_op.getResult();
 }
 
@@ -117,7 +224,7 @@ Value getTosaMulShiftConstTensor(PatternRewriter &rewriter, Operation *op,
       shiftType, rewriter.getIntegerAttr(rewriter.getIntegerType(8), shift));
 
   auto constShift =
-      tosa::ConstOp::create(rewriter, op->getLoc(), shiftType, shiftAttr);
+      rewriter.create<tosa::ConstOp>(op->getLoc(), shiftType, shiftAttr);
 
   return constShift.getResult();
 }
@@ -168,7 +275,7 @@ std::optional<Value> getConstTensor(PatternRewriter &rewriter, Operation *op,
   auto const_attr = DenseElementsAttr::get(const_type, vec);
 
   auto const_op =
-      tosa::ConstOp::create(rewriter, op->getLoc(), const_type, const_attr);
+      rewriter.create<tosa::ConstOp>(op->getLoc(), const_type, const_attr);
 
   if (dtype) {
     return tosa::tosaCastTensorToType(rewriter, const_op,
@@ -199,7 +306,7 @@ std::optional<Value> getConstTensor<APInt>(PatternRewriter &rewriter,
   auto const_attr = DenseElementsAttr::get(const_type, vec);
 
   auto const_op =
-      tosa::ConstOp::create(rewriter, op->getLoc(), const_type, const_attr);
+      rewriter.create<tosa::ConstOp>(op->getLoc(), const_type, const_attr);
 
   if (dtype) {
     return tosa::tosaCastTensorToType(rewriter, const_op,
@@ -229,7 +336,7 @@ std::optional<Value> getConstTensor<float>(PatternRewriter &rewriter,
   auto const_attr = DenseElementsAttr::get(const_type, vec);
 
   auto const_op =
-      tosa::ConstOp::create(rewriter, op->getLoc(), const_type, const_attr);
+      rewriter.create<tosa::ConstOp>(op->getLoc(), const_type, const_attr);
 
   if (dtype) {
     return tosa::tosaCastTensorToType(rewriter, const_op,
@@ -337,18 +444,18 @@ std::optional<Value> tosaCastTensorToType(PatternRewriter &rewriter, Value src,
 
     auto cmpTy = srcType.clone(rewriter.getIntegerType(1));
     Value isEq =
-        tosa::EqualOp::create(rewriter, op->getLoc(), cmpTy, src, zeroValue);
-    return tosa::LogicalNotOp::create(rewriter, op->getLoc(),
-                                      srcType.clone(destElemTy), isEq);
+        rewriter.create<tosa::EqualOp>(op->getLoc(), cmpTy, src, zeroValue);
+    return rewriter.create<tosa::LogicalNotOp>(op->getLoc(),
+                                               srcType.clone(destElemTy), isEq);
   }
 
   if (srcElemTy.isInteger(1) && llvm::isa<FloatType>(destElemTy)) {
     // TOSA does not support casting from i1->float.
     // Instead, we cast to i8 and then to the float.
     TensorType midType = srcType.clone(rewriter.getIntegerType(8));
-    Value mid = tosa::CastOp::create(rewriter, op->getLoc(), midType, src);
-    return tosa::CastOp::create(rewriter, op->getLoc(),
-                                srcType.clone(destElemTy), mid);
+    Value mid = rewriter.create<tosa::CastOp>(op->getLoc(), midType, src);
+    return rewriter.create<tosa::CastOp>(op->getLoc(),
+                                         srcType.clone(destElemTy), mid);
   }
 
   if (srcElemTy == destElemTy)
@@ -360,8 +467,8 @@ std::optional<Value> tosaCastTensorToType(PatternRewriter &rewriter, Value src,
     // PyTorch performs round-to-zero instead.
     // Generate round-to-zero conversion prior to tosa.cast to match with
     // expected torch behavior.
-    auto floor = tosa::FloorOp::create(rewriter, op->getLoc(), srcType, src);
-    auto ceil = tosa::CeilOp::create(rewriter, op->getLoc(), srcType, src);
+    auto floor = rewriter.create<tosa::FloorOp>(op->getLoc(), srcType, src);
+    auto ceil = rewriter.create<tosa::CeilOp>(op->getLoc(), srcType, src);
 
     auto zeroValue =
         tosa::getConstTensor<float>(rewriter, op, 0, {}, srcElemTy).value();
@@ -378,7 +485,7 @@ std::optional<Value> tosaCastTensorToType(PatternRewriter &rewriter, Value src,
   }
 
   TensorType castedSrcType = srcType.clone(destElemTy);
-  return tosa::CastOp::create(rewriter, op->getLoc(), castedSrcType, src);
+  return rewriter.create<tosa::CastOp>(op->getLoc(), castedSrcType, src);
 }
 
 // Template instantiation
@@ -472,7 +579,7 @@ LogicalResult getConvOpsAccType(PatternRewriter &rewriter,
 FailureOr<Value> getConvBiasForNoneType(Operation *op,
                                         PatternRewriter &rewriter,
                                         Type inputElemTy, Type outputElemTy,
-                                        int64_t numOutputChannels) {
+                                        ArrayRef<int64_t> weightShape) {
 
   Type biasElemTy;
 
@@ -498,91 +605,18 @@ FailureOr<Value> getConvBiasForNoneType(Operation *op,
     biasElemTy = outputElemTy;
   }
 
-  if (ShapedType::isDynamic(numOutputChannels))
-    return rewriter.notifyMatchFailure(
-        op, "cannot synthesize conv bias with dynamic output channels");
-
-  int32_t oc = static_cast<int32_t>(numOutputChannels);
-
   if (biasElemTy.isInteger()) {
-    SmallVector<int32_t> zeroVec(oc, 0);
-    return tosa::getConstTensor<int32_t>(rewriter, op, zeroVec, {oc}).value();
+    SmallVector<int32_t> zeroVec(weightShape[0], 0);
+    return tosa::getConstTensor<int32_t>(rewriter, op, zeroVec,
+                                         {static_cast<int32_t>(weightShape[0])})
+        .value();
   } else {
-    SmallVector<float> zeroVec(oc, 0);
-    return tosa::getConstTensor<float>(rewriter, op, zeroVec, {oc}, biasElemTy)
+    SmallVector<float> zeroVec(weightShape[0], 0);
+    return tosa::getConstTensor<float>(rewriter, op, zeroVec,
+                                       {static_cast<int32_t>(weightShape[0])},
+                                       biasElemTy)
         .value();
   }
-}
-
-Value emitExplicitZeroPadNHWC(Location loc, PatternRewriter &rewriter,
-                              Operation *op, Value inputNHWC,
-                              ArrayRef<int64_t> padExtents) {
-  assert(padExtents.size() == 4 && "expected [top, bottom, left, right]");
-
-  if (llvm::all_of(padExtents, [](int64_t v) { return v == 0; }))
-    return inputNHWC;
-
-  SmallVector<int64_t, 8> nhwcPadding = {
-      0, 0, padExtents[0], padExtents[1], padExtents[2], padExtents[3], 0, 0};
-  Value nhwcPadShape = tosa::getTosaConstShape(rewriter, loc, nhwcPadding);
-
-  auto inputTy = dyn_cast<RankedTensorType>(inputNHWC.getType());
-  if (!inputTy)
-    return inputNHWC;
-  SmallVector<int64_t, 4> resultShape(inputTy.getShape().begin(),
-                                      inputTy.getShape().end());
-  auto addPad = [](int64_t dim, int64_t before, int64_t after) -> int64_t {
-    if (ShapedType::isDynamic(dim))
-      return ShapedType::kDynamic;
-    return dim + before + after;
-  };
-  resultShape[1] = addPad(resultShape[1], padExtents[0], padExtents[1]);
-  resultShape[2] = addPad(resultShape[2], padExtents[2], padExtents[3]);
-
-  auto resultTy = RankedTensorType::get(resultShape, inputTy.getElementType());
-
-  Type elemTy = inputTy.getElementType();
-  Value padConst;
-  if (isa<mlir::FloatType>(elemTy)) {
-    padConst = *getConstTensor<float>(rewriter, op, {0.0f}, {1}, elemTy);
-  } else {
-    padConst = *getConstTensor<int32_t>(rewriter, op, {0}, {1}, elemTy);
-  }
-
-  return tosa::PadOp::create(rewriter, loc, resultTy, inputNHWC, nhwcPadShape,
-                             padConst)
-      .getResult();
-}
-
-FailureOr<Value> getZeroPointValue(PatternRewriter &rewriter, Operation *op,
-                                   Value tensor, Type elemType) {
-  Location loc = op->getLoc();
-
-  Value zp;
-  // Torch::getZeroPoint looks at the defining op of `tensor` to find
-  // the quantization parameters.
-  torch::Torch::getZeroPoint(tensor, zp);
-
-  if (!zp) {
-    // Initialize zero constant values as zero-points, if the input tensor isn't
-    // quantized
-    zp = tosa::createZeroPointTensor(rewriter, loc, elemType, 0).value();
-  } else {
-
-    int64_t zpConst;
-    if (!matchPattern(zp, torch::Torch::m_TorchConstantInt(&zpConst)))
-      return rewriter.notifyMatchFailure(
-          op, "zero point must be a scalar constant");
-
-    zp = tosa::createZeroPointTensor(rewriter, loc, elemType, zpConst).value();
-  }
-
-  return zp;
-}
-
-bool typeHasZeroDim(ShapedType type) {
-  auto outShape = type.getShape();
-  return llvm::any_of(outShape, [](int64_t dim) { return dim == 0; });
 }
 
 } // namespace tosa

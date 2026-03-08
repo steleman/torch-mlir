@@ -9,6 +9,7 @@
 
 #include "torch-mlir/Conversion/TorchToStablehlo/TorchToStablehlo.h"
 
+#include "../PassDetail.h"
 #include "PopulatePatterns.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -28,8 +29,7 @@ using namespace mlir::torch::Torch;
 using namespace mlir::torch::torch_to_stablehlo;
 
 static Value createInitialValueForAtenPoolingOp(Operation *op, Type elementTy,
-                                                PatternRewriter &rewriter,
-                                                bool allowNonFinites) {
+                                                PatternRewriter &rewriter) {
   auto constType = RankedTensorType::get({}, elementTy);
   // Avg pooling
   if (isa<AtenAvgPool1dOp, AtenAdaptiveAvgPool2dOp, AtenAvgPool2dOp,
@@ -39,14 +39,14 @@ static Value createInitialValueForAtenPoolingOp(Operation *op, Type elementTy,
           constType, {APFloat::getZero(
                          cast<mlir::FloatType>(elementTy).getFloatSemantics(),
                          /*negative=*/false)});
-      return stablehlo::ConstantOp::create(rewriter, op->getLoc(), constType,
-                                           constAttr);
+      return rewriter.create<stablehlo::ConstantOp>(op->getLoc(), constType,
+                                                    constAttr);
     } else if (isa<mlir::IntegerType>(elementTy) &&
                elementTy.getIntOrFloatBitWidth() != 8) {
       auto constAttr = DenseElementsAttr::get(
           constType, {APInt::getZero(elementTy.getIntOrFloatBitWidth())});
-      return stablehlo::ConstantOp::create(rewriter, op->getLoc(), constType,
-                                           constAttr);
+      return rewriter.create<stablehlo::ConstantOp>(op->getLoc(), constType,
+                                                    constAttr);
     }
   }
 
@@ -55,17 +55,18 @@ static Value createInitialValueForAtenPoolingOp(Operation *op, Type elementTy,
           AtenMaxPool1dWithIndicesOp, AtenMaxPool2dWithIndicesOp>(op)) {
     if (isa<mlir::FloatType>(elementTy)) {
       auto constAttr = DenseElementsAttr::get(
-          constType, {getFloatInf(cast<mlir::FloatType>(elementTy),
-                                  /*negative=*/true, allowNonFinites)});
-      return stablehlo::ConstantOp::create(rewriter, op->getLoc(), constType,
-                                           constAttr);
+          constType,
+          {APFloat::getInf(cast<mlir::FloatType>(elementTy).getFloatSemantics(),
+                           /*negative=*/true)});
+      return rewriter.create<stablehlo::ConstantOp>(op->getLoc(), constType,
+                                                    constAttr);
     } else if (isa<mlir::IntegerType>(elementTy) &&
                elementTy.getIntOrFloatBitWidth() != 8) {
       auto constAttr = DenseElementsAttr::get(
           constType,
           {APInt::getSignedMinValue(elementTy.getIntOrFloatBitWidth())});
-      return stablehlo::ConstantOp::create(rewriter, op->getLoc(), constType,
-                                           constAttr);
+      return rewriter.create<stablehlo::ConstantOp>(op->getLoc(), constType,
+                                                    constAttr);
     }
   }
   op->emitError("unimplemented lowering in AtenPoolingOp");
@@ -154,8 +155,7 @@ LogicalResult ConvertAtenOp<AtenMaxPool1dWithIndicesOp>::matchAndRewrite(
     }
   }
 
-  Value initVal = createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter,
-                                                     options.allowNonFinites);
+  Value initVal = createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter);
 
   auto windowDimensions = rewriter.getDenseI64ArrayAttr(stablehloKernelSize);
   auto windowStrides = rewriter.getDenseI64ArrayAttr(stablehloStride);
@@ -173,21 +173,22 @@ LogicalResult ConvertAtenOp<AtenMaxPool1dWithIndicesOp>::matchAndRewrite(
         op, "failed to get dimension sizes of the input");
   }
   auto inputShapeVec = *inputShapeInfo;
-  auto inputShapeTensor = mlir::tensor::FromElementsOp::create(
-      rewriter, op->getLoc(), inputShapeVec);
+  auto inputShapeTensor = rewriter.create<mlir::tensor::FromElementsOp>(
+      op->getLoc(), inputShapeVec);
 
   // no need to reshape here for max_pool_1d. Need to make sure the iota
   // dimension. dim=inputRank-2 or dim=inputRank-1?
   auto indexTensor =
-      stablehlo::DynamicIotaOp::create(
-          rewriter, op->getLoc(),
-          RankedTensorType::get(inputShape, rewriter.getI64Type()),
-          inputShapeTensor, static_cast<uint64_t>(inputRank - 1))
+      rewriter
+          .create<stablehlo::DynamicIotaOp>(
+              op->getLoc(),
+              RankedTensorType::get(inputShape, rewriter.getI64Type()),
+              inputShapeTensor, static_cast<uint64_t>(inputRank - 1))
           .getResult();
   Value initIdx = hlo::getConstTensor<int64_t>(rewriter, op, {0}, {}).value();
 
-  auto reduceWindowOp = stablehlo::ReduceWindowOp::create(
-      rewriter, op->getLoc(), mlir::TypeRange{outValTy, outIdxTy},
+  auto reduceWindowOp = rewriter.create<stablehlo::ReduceWindowOp>(
+      op->getLoc(), mlir::TypeRange{outValTy, outIdxTy},
       mlir::ValueRange{input, indexTensor}, mlir::ValueRange{initVal, initIdx},
       windowDimensions, windowStrides, baseDilations, windowDilations, pad);
 
@@ -225,25 +226,25 @@ LogicalResult ConvertAtenOp<AtenMaxPool1dWithIndicesOp>::matchAndRewrite(
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToStart(&block);
 
-    Value compareGeResult = stablehlo::CompareOp::create(
-        rewriter, op->getLoc(), compareResultType, *firstValArg, *secondValArg,
+    Value compareGeResult = rewriter.create<stablehlo::CompareOp>(
+        op->getLoc(), compareResultType, *firstValArg, *secondValArg,
         compareGeDirectionAttr, compareTypeAttr);
-    Value retValResult = stablehlo::SelectOp::create(
-        rewriter, op->getLoc(), compareGeResult, *firstValArg, *secondValArg);
+    Value retValResult = rewriter.create<stablehlo::SelectOp>(
+        op->getLoc(), compareGeResult, *firstValArg, *secondValArg);
 
     // Get smaller index if compared values are equal.
-    Value compareEqResult = stablehlo::CompareOp::create(
-        rewriter, op->getLoc(), compareResultType, *firstValArg, *secondValArg,
+    Value compareEqResult = rewriter.create<stablehlo::CompareOp>(
+        op->getLoc(), compareResultType, *firstValArg, *secondValArg,
         compareEqDirectionAttr, compareTypeAttr);
-    Value minIdx = stablehlo::MinOp::create(rewriter, op->getLoc(),
-                                            *firstIdxArg, *secondIdxArg);
-    Value idxWithGeVal = stablehlo::SelectOp::create(
-        rewriter, op->getLoc(), compareGeResult, *firstIdxArg, *secondIdxArg);
-    Value retIdxResult = stablehlo::SelectOp::create(
-        rewriter, op->getLoc(), compareEqResult, minIdx, idxWithGeVal);
+    Value minIdx = rewriter.create<stablehlo::MinOp>(op->getLoc(), *firstIdxArg,
+                                                     *secondIdxArg);
+    Value idxWithGeVal = rewriter.create<stablehlo::SelectOp>(
+        op->getLoc(), compareGeResult, *firstIdxArg, *secondIdxArg);
+    Value retIdxResult = rewriter.create<stablehlo::SelectOp>(
+        op->getLoc(), compareEqResult, minIdx, idxWithGeVal);
 
-    stablehlo::ReturnOp::create(rewriter, op->getLoc(),
-                                mlir::ValueRange{retValResult, retIdxResult});
+    rewriter.create<stablehlo::ReturnOp>(
+        op->getLoc(), mlir::ValueRange{retValResult, retIdxResult});
   }
 
   rewriter.replaceOp(op, reduceWindowOp.getResults());
@@ -306,8 +307,7 @@ LogicalResult ConvertAtenOp<AtenMaxPool2dWithIndicesOp>::matchAndRewrite(
   std::copy(kernelSize.begin(), kernelSize.end(),
             stablehloKernelSize.begin() + inputRank - 2);
 
-  Value initVal = createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter,
-                                                     options.allowNonFinites);
+  Value initVal = createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter);
 
   stablehloPadding[stablehloPadding.size() - 4] = padding[0];
   stablehloPadding[stablehloPadding.size() - 3] = padding[0];
@@ -330,17 +330,17 @@ LogicalResult ConvertAtenOp<AtenMaxPool2dWithIndicesOp>::matchAndRewrite(
         op, "failed to get dimension sizes of the input");
   }
   auto inputShapeVec = *inputShapeInfo;
-  auto inputShapeTensor = mlir::tensor::FromElementsOp::create(
-      rewriter, op->getLoc(), inputShapeVec);
+  auto inputShapeTensor = rewriter.create<mlir::tensor::FromElementsOp>(
+      op->getLoc(), inputShapeVec);
 
   SmallVector<Value> initIndexShapeVec;
   for (int64_t i = 0; i < inputRank - 2; i++)
     initIndexShapeVec.push_back(inputShapeVec[i]);
-  initIndexShapeVec.push_back(mlir::arith::MulIOp::create(
-      rewriter, op->getLoc(), inputShapeVec[inputRank - 1],
+  initIndexShapeVec.push_back(rewriter.create<mlir::arith::MulIOp>(
+      op->getLoc(), inputShapeVec[inputRank - 1],
       inputShapeVec[inputRank - 2]));
-  auto initIndexShapeTensor = mlir::tensor::FromElementsOp::create(
-      rewriter, op->getLoc(), initIndexShapeVec);
+  auto initIndexShapeTensor = rewriter.create<mlir::tensor::FromElementsOp>(
+      op->getLoc(), initIndexShapeVec);
 
   SmallVector<int64_t> initIndexShapeForType(inputShape.begin(),
                                              inputShape.end() - 2);
@@ -353,23 +353,26 @@ LogicalResult ConvertAtenOp<AtenMaxPool2dWithIndicesOp>::matchAndRewrite(
   }
 
   auto initIndexTensor =
-      stablehlo::DynamicIotaOp::create(
-          rewriter, op->getLoc(),
-          RankedTensorType::get(initIndexShapeForType, rewriter.getI64Type()),
-          initIndexShapeTensor, static_cast<uint64_t>(inputRank - 2))
+      rewriter
+          .create<stablehlo::DynamicIotaOp>(
+              op->getLoc(),
+              RankedTensorType::get(initIndexShapeForType,
+                                    rewriter.getI64Type()),
+              initIndexShapeTensor, static_cast<uint64_t>(inputRank - 2))
           .getResult();
 
   auto indexTensor =
-      stablehlo::DynamicReshapeOp::create(
-          rewriter, op->getLoc(),
-          RankedTensorType::get(inputShape, rewriter.getI64Type()),
-          initIndexTensor, inputShapeTensor)
+      rewriter
+          .create<stablehlo::DynamicReshapeOp>(
+              op->getLoc(),
+              RankedTensorType::get(inputShape, rewriter.getI64Type()),
+              initIndexTensor, inputShapeTensor)
           .getResult();
 
   Value initIdx = hlo::getConstTensor<int64_t>(rewriter, op, {0}, {}).value();
 
-  auto reduceWindowOp = stablehlo::ReduceWindowOp::create(
-      rewriter, op->getLoc(), mlir::TypeRange{outValTy, outIdxTy},
+  auto reduceWindowOp = rewriter.create<stablehlo::ReduceWindowOp>(
+      op->getLoc(), mlir::TypeRange{outValTy, outIdxTy},
       mlir::ValueRange{input, indexTensor}, mlir::ValueRange{initVal, initIdx},
       windowDimensions, windowStrides, baseDilations, windowDilations, pad);
 
@@ -407,25 +410,25 @@ LogicalResult ConvertAtenOp<AtenMaxPool2dWithIndicesOp>::matchAndRewrite(
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToStart(&block);
 
-    Value compareGeResult = stablehlo::CompareOp::create(
-        rewriter, op->getLoc(), compareResultType, *firstValArg, *secondValArg,
+    Value compareGeResult = rewriter.create<stablehlo::CompareOp>(
+        op->getLoc(), compareResultType, *firstValArg, *secondValArg,
         compareGeDirectionAttr, compareTypeAttr);
-    Value retValResult = stablehlo::SelectOp::create(
-        rewriter, op->getLoc(), compareGeResult, *firstValArg, *secondValArg);
+    Value retValResult = rewriter.create<stablehlo::SelectOp>(
+        op->getLoc(), compareGeResult, *firstValArg, *secondValArg);
 
     // Get smaller index if compared values are equal.
-    Value compareEqResult = stablehlo::CompareOp::create(
-        rewriter, op->getLoc(), compareResultType, *firstValArg, *secondValArg,
+    Value compareEqResult = rewriter.create<stablehlo::CompareOp>(
+        op->getLoc(), compareResultType, *firstValArg, *secondValArg,
         compareEqDirectionAttr, compareTypeAttr);
-    Value minIdx = stablehlo::MinOp::create(rewriter, op->getLoc(),
-                                            *firstIdxArg, *secondIdxArg);
-    Value idxWithGeVal = stablehlo::SelectOp::create(
-        rewriter, op->getLoc(), compareGeResult, *firstIdxArg, *secondIdxArg);
-    Value retIdxResult = stablehlo::SelectOp::create(
-        rewriter, op->getLoc(), compareEqResult, minIdx, idxWithGeVal);
+    Value minIdx = rewriter.create<stablehlo::MinOp>(op->getLoc(), *firstIdxArg,
+                                                     *secondIdxArg);
+    Value idxWithGeVal = rewriter.create<stablehlo::SelectOp>(
+        op->getLoc(), compareGeResult, *firstIdxArg, *secondIdxArg);
+    Value retIdxResult = rewriter.create<stablehlo::SelectOp>(
+        op->getLoc(), compareEqResult, minIdx, idxWithGeVal);
 
-    stablehlo::ReturnOp::create(rewriter, op->getLoc(),
-                                mlir::ValueRange{retValResult, retIdxResult});
+    rewriter.create<stablehlo::ReturnOp>(
+        op->getLoc(), mlir::ValueRange{retValResult, retIdxResult});
   }
 
   rewriter.replaceOp(op, reduceWindowOp.getResults());
@@ -495,9 +498,8 @@ public:
     std::copy(kernelSize.begin(), kernelSize.end(),
               stablehloKernelSize.begin() + inputRank - Dim);
 
-    const auto &options = ConvertAtenOp<AtenOpT>::getOptions();
-    Value initVal = createInitialValueForAtenPoolingOp(
-        op, inputElemTy, rewriter, options.allowNonFinites);
+    Value initVal =
+        createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter);
 
     if (Dim < 1 || Dim > 3) {
       assert(false && "Unsupported pooling dimension");
@@ -556,9 +558,9 @@ public:
             rewriter.getI64Type()),
         stablehloPadding);
 
-    auto reduceWindowOp = stablehlo::ReduceWindowOp::create(
-        rewriter, op->getLoc(), outTy, input, initVal, windowDimensions,
-        windowStrides, baseDilations, windowDilations, pad);
+    auto reduceWindowOp = rewriter.create<stablehlo::ReduceWindowOp>(
+        op->getLoc(), outTy, input, initVal, windowDimensions, windowStrides,
+        baseDilations, windowDilations, pad);
 
     Block &block = reduceWindowOp.getBody().emplaceBlock();
 
@@ -573,9 +575,9 @@ public:
       OpBuilder::InsertionGuard guard(rewriter);
       rewriter.setInsertionPointToStart(&block);
 
-      Value result = stablehlo::MaxOp::create(rewriter, op->getLoc(), *firstArg,
-                                              *secondArg);
-      stablehlo::ReturnOp::create(rewriter, op->getLoc(), result);
+      Value result = rewriter.create<stablehlo::MaxOp>(op->getLoc(), *firstArg,
+                                                       *secondArg);
+      rewriter.create<stablehlo::ReturnOp>(op->getLoc(), result);
     }
 
     rewriter.replaceOp(op, reduceWindowOp.getResults());
@@ -672,9 +674,8 @@ public:
       assert(false && "Unsupported pooling dimension");
     }
 
-    const auto &options = ConvertAtenOp<AtenOpT>::getOptions();
-    Value initVal = createInitialValueForAtenPoolingOp(
-        op, inputElemTy, rewriter, options.allowNonFinites);
+    Value initVal =
+        createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter);
 
     auto windowDimensions = rewriter.getDenseI64ArrayAttr(stablehloKernelSize);
     auto windowStrides = rewriter.getDenseI64ArrayAttr(stablehloStride);
@@ -686,9 +687,9 @@ public:
             rewriter.getI64Type()),
         stablehloPadding);
 
-    auto reduceWindowSum = stablehlo::ReduceWindowOp::create(
-        rewriter, op->getLoc(), outTy, input, initVal, windowDimensions,
-        windowStrides, baseDilations, windowDilations, pad);
+    auto reduceWindowSum = rewriter.create<stablehlo::ReduceWindowOp>(
+        op->getLoc(), outTy, input, initVal, windowDimensions, windowStrides,
+        baseDilations, windowDilations, pad);
 
     Block &sumBlock = reduceWindowSum.getBody().emplaceBlock();
 
@@ -704,8 +705,8 @@ public:
       rewriter.setInsertionPointToStart(&sumBlock);
 
       Value sumResult =
-          stablehlo::AddOp::create(rewriter, op->getLoc(), firstArg, secondArg);
-      stablehlo::ReturnOp::create(rewriter, op->getLoc(), sumResult);
+          rewriter.create<stablehlo::AddOp>(op->getLoc(), firstArg, secondArg);
+      rewriter.create<stablehlo::ReturnOp>(op->getLoc(), sumResult);
     }
 
     // Use kernel size as the divisor
@@ -741,18 +742,17 @@ public:
     windowSizeConst = hlo::promoteType(rewriter, op.getLoc(), windowSizeConst,
                                        outTy.getElementType());
     auto inputShapeVec = *hlo::getDimIndexOfTensor(rewriter, op, input);
-    auto inputShapeTensor = mlir::tensor::FromElementsOp::create(
-        rewriter, op->getLoc(), inputShapeVec);
+    auto inputShapeTensor = rewriter.create<mlir::tensor::FromElementsOp>(
+        op->getLoc(), inputShapeVec);
 
-    windowSizeConst = stablehlo::DynamicBroadcastInDimOp::create(
-        rewriter, op->getLoc(),
+    windowSizeConst = rewriter.create<stablehlo::DynamicBroadcastInDimOp>(
+        op->getLoc(),
         RankedTensorType::get(inputTy.getShape(), outTy.getElementType()),
         windowSizeConst, inputShapeTensor, rewriter.getDenseI64ArrayAttr({}));
 
-    Value zero = createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter,
-                                                    options.allowNonFinites);
-    auto reduceWindowSize = stablehlo::ReduceWindowOp::create(
-        rewriter, op->getLoc(), RankedTensorType::get(outShape, inputElemTy),
+    Value zero = createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter);
+    auto reduceWindowSize = rewriter.create<stablehlo::ReduceWindowOp>(
+        op->getLoc(), RankedTensorType::get(outShape, inputElemTy),
         windowSizeConst, zero, windowDimensions, windowStrides, baseDilations,
         windowDilations, pad);
 
@@ -770,8 +770,8 @@ public:
       rewriter.setInsertionPointToStart(&sizeBlock);
 
       Value sumResult =
-          stablehlo::AddOp::create(rewriter, op->getLoc(), firstArg, secondArg);
-      stablehlo::ReturnOp::create(rewriter, op->getLoc(), sumResult);
+          rewriter.create<stablehlo::AddOp>(op->getLoc(), firstArg, secondArg);
+      rewriter.create<stablehlo::ReturnOp>(op->getLoc(), sumResult);
     }
 
     rewriter.replaceOpWithNewOp<stablehlo::DivOp>(
@@ -811,8 +811,7 @@ LogicalResult ConvertAtenOp<AtenCumsumOp>::matchAndRewrite(
         op, "unimplemented: cumsum dim must be static");
   }
 
-  Value initVal = createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter,
-                                                     options.allowNonFinites);
+  Value initVal = createInitialValueForAtenPoolingOp(op, inputElemTy, rewriter);
 
   SmallVector<int64_t> stablehloKernelSize(inputRank, 1);
   stablehloKernelSize[dim] = inputShape[dim];
@@ -831,9 +830,9 @@ LogicalResult ConvertAtenOp<AtenCumsumOp>::matchAndRewrite(
           rewriter.getI64Type()),
       stablehloPadding);
 
-  auto reduceWindowSum = stablehlo::ReduceWindowOp::create(
-      rewriter, op->getLoc(), outTy, input, initVal, windowDimensions,
-      windowStrides, baseDilations, windowDilations, pad);
+  auto reduceWindowSum = rewriter.create<stablehlo::ReduceWindowOp>(
+      op->getLoc(), outTy, input, initVal, windowDimensions, windowStrides,
+      baseDilations, windowDilations, pad);
 
   Block &sumBlock = reduceWindowSum.getBody().emplaceBlock();
 
@@ -849,8 +848,8 @@ LogicalResult ConvertAtenOp<AtenCumsumOp>::matchAndRewrite(
     rewriter.setInsertionPointToStart(&sumBlock);
 
     Value sumResult =
-        stablehlo::AddOp::create(rewriter, op->getLoc(), *firstArg, *secondArg);
-    stablehlo::ReturnOp::create(rewriter, op->getLoc(), sumResult);
+        rewriter.create<stablehlo::AddOp>(op->getLoc(), *firstArg, *secondArg);
+    rewriter.create<stablehlo::ReturnOp>(op->getLoc(), sumResult);
   }
 
   rewriter.replaceOp(op, reduceWindowSum.getResults());

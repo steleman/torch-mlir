@@ -9,17 +9,22 @@
 
 #include "torch-mlir/InitAll.h"
 
-#include "mlir/Dialect/Complex/IR/Complex.h"
-#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Dialect/MLProgram/IR/MLProgram.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Tensor/IR/TensorInferTypeOpInterfaceImpl.h"
-#include "mlir/IR/Dialect.h"
+#include <mlir/Dialect/Complex/IR/Complex.h>
+#include <mlir/Dialect/Func/Extensions/InlinerExtension.h>
+#include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Dialect/Linalg/IR/Linalg.h>
+#include <mlir/Dialect/MLProgram/IR/MLProgram.h>
+#include <mlir/Dialect/MemRef/IR/MemRef.h>
+#include <mlir/Dialect/SCF/IR/SCF.h>
+#include <mlir/Dialect/SparseTensor/IR/SparseTensor.h>
+#include <mlir/Dialect/Tensor/IR/Tensor.h>
+#include <mlir/Dialect/Tensor/IR/TensorInferTypeOpInterfaceImpl.h>
+#include <mlir/IR/Dialect.h>
+#include <mlir/InitAllDialects.h>
+#include <mlir/InitAllPasses.h>
+#include <mlir/InitAllExtensions.h>
+#include <mlir/Transforms/Passes.h.inc>
+
 #include "torch-mlir-dialects/Dialect/TMTensor/IR/TMTensorDialect.h"
 #include "torch-mlir-dialects/Dialect/TMTensor/Transforms/Passes.h"
 #include "torch-mlir/Conversion/Passes.h"
@@ -41,7 +46,24 @@
 #endif
 
 void mlir::torch::registerAllDialects(mlir::DialectRegistry &registry) {
-  registry.insert<mlir::func::FuncDialect>();
+  registry.insert<arith::ArithDialect,
+                  affine::AffineDialect,
+                  bufferization::BufferizationDialect,
+                  cf::ControlFlowDialect,
+                  DLTIDialect,
+                  func::FuncDialect,
+                  gpu::GPUDialect,
+                  mesh::MeshDialect,
+                  index::IndexDialect,
+                  irdl::IRDLDialect,
+                  LLVM::LLVMDialect,
+                  math::MathDialect,
+                  omp::OpenMPDialect,
+                  quant::QuantDialect,
+                  shape::ShapeDialect,
+                  ub::UBDialect,
+                  vector::VectorDialect>();
+
   registry.insert<mlir::torch::Torch::TorchDialect>();
   registry.insert<mlir::torch::TorchConversion::TorchConversionDialect>();
   registry.insert<mlir::torch::TMTensor::TMTensorDialect>();
@@ -53,8 +75,9 @@ void mlir::torch::registerAllExtensions(mlir::DialectRegistry &registry) {
 }
 
 // TODO: Break this up when backends are separated.
-void mlir::torch::registerOptionalInputDialects(
-    mlir::DialectRegistry &registry) {
+void
+mlir::torch::registerOptionalInputDialects(mlir::DialectRegistry &registry) {
+
   registry.insert<complex::ComplexDialect, linalg::LinalgDialect,
                   memref::MemRefDialect, ml_program::MLProgramDialect,
                   scf::SCFDialect, sparse_tensor::SparseTensorDialect,
@@ -84,3 +107,4 @@ void mlir::torch::registerAllPasses() {
   mlir::torch::RefBackend::registerRefBackendPasses();
 #endif
 }
+

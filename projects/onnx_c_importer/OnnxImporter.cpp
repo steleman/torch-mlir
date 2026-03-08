@@ -368,28 +368,41 @@ Status GraphInfo::Initialize() {
       return model_info_.SetError("ONNX initializer name already used: " +
                                   t.name());
     }
-    InitializerMapEmplace(t.name(), t);
+
+    InitializerMapEmplace(t.name(), &t);
   }
+
   for (const onnx::ValueInfoProto &v : graph_proto_.value_info()) {
-    if (value_info_map_.find(v.name()) != value_info_map_.end()) {
+    onnx::ValueInfoProto& non_const_v = const_cast<onnx::ValueInfoProto&>(v);
+    if (value_info_map_.find(non_const_v.name()) != value_info_map_.end()) {
       return model_info_.SetError("ONNX value_info name already used: " +
-                                  v.name());
+                                  non_const_v.name());
     }
-    value_info_map_.emplace(v.name(), v);
+
+    value_info_map_.emplace(v.name(), &v);
+    // value_info_map_.emplace(v.name(), non_const_v);
   }
+
   for (const onnx::ValueInfoProto &v : graph_proto_.input()) {
-    if (declared_input_map_.find(v.name()) != declared_input_map_.end()) {
+    onnx::ValueInfoProto& non_const_v = const_cast<onnx::ValueInfoProto&>(v);
+    if (declared_input_map_.find(non_const_v.name()) != declared_input_map_.end()) {
       return model_info_.SetError("ONNX value_info name already used: " +
-                                  v.name());
+                                  non_const_v.name());
     }
-    declared_input_map_.emplace(v.name(), v);
+
+    declared_input_map_.emplace(v.name(), &v);
+    // declared_input_map_.emplace(v.name(), non_const_v);
   }
+
   for (const onnx::ValueInfoProto &v : graph_proto_.output()) {
-    if (output_map_.find(v.name()) != output_map_.end()) {
+    onnx::ValueInfoProto& non_const_v = const_cast<onnx::ValueInfoProto&>(v);
+    if (output_map_.find(non_const_v.name()) != output_map_.end()) {
       return model_info_.SetError("ONNX value_info name already used: " +
-                                  v.name());
+                                  non_const_v.name());
     }
-    output_map_.emplace(v.name(), v);
+
+    output_map_.emplace(v.name(), &v);
+    // output_map_.emplace(v.name(), non_const_v);
   }
 
   // Generate the effective input map, which for old models can be a subset of
@@ -403,6 +416,7 @@ Status GraphInfo::Initialize() {
         // In initializers. Skip.
         continue;
       }
+
       input_map_.emplace(key, decIn.second);
     }
   } else {
@@ -415,6 +429,7 @@ Status GraphInfo::Initialize() {
         illegalKeys.push_back(key);
       }
     }
+
     if (!illegalKeys.empty()) {
       std::string error = "When not in elide_initialized_inputs=true mode, we "
                           "expect inputs to not have an initial value (got " +
@@ -433,19 +448,19 @@ const onnx::TypeProto *GraphInfo::FindTypeProtoForName(std::string_view name) {
   {
     auto it = value_info_map_.find(name);
     if (it != value_info_map_.end()) {
-      return &it->second.type();
+      return &it->second->type();
     }
   }
   {
     auto it = output_map_.find(name);
     if (it != output_map_.end()) {
-      return &it->second.type();
+      return &it->second->type();
     }
   }
   {
     auto it = declared_input_map_.find(name);
     if (it != declared_input_map_.end()) {
-      return &it->second.type();
+      return &it->second->type();
     }
   }
   {
@@ -458,13 +473,12 @@ const onnx::TypeProto *GraphInfo::FindTypeProtoForName(std::string_view name) {
   return nullptr;
 }
 
-void GraphInfo::InitializerMapEmplace(const std::string_view &name,
-                                      const onnx::TensorProto &tp) {
-  initializer_map_.emplace(
-      name,
-      std::pair<const onnx::TensorProto &, onnx::TypeProto>(
-          tp, MakeTensorTypeProto(onnx::TensorProto_DataType(tp.data_type()),
-                                  tp.dims())));
+void GraphInfo::InitializerMapEmplace(const std::string_view& name,
+                                      const onnx::TensorProto* tp) {
+  initializer_map_.emplace(name,
+      std::pair<const onnx::TensorProto&, onnx::TypeProto>(
+          *tp, MakeTensorTypeProto(onnx::TensorProto_DataType(tp->data_type()),
+                                  tp->dims())));
 }
 
 // ---------------------------------------------------------------------------//
@@ -1085,7 +1099,7 @@ FailureOr<NodeImporter> NodeImporter::DefineFunction(GraphInfo &graphInfo,
   std::vector<MlirLocation> inputLocs;
   std::vector<MlirType> outputTypes;
   for (const auto &input : graphInfo.GetInputMap()) {
-    MlirType t = contextCache.ConvertTypeProto(&input.second.type());
+    MlirType t = contextCache.ConvertTypeProto(&input.second->type());
     if (mlirTypeIsNull(t)) {
       return failure;
     }
@@ -1095,7 +1109,7 @@ FailureOr<NodeImporter> NodeImporter::DefineFunction(GraphInfo &graphInfo,
                                             /*childLoc=*/{nullptr}));
   }
   for (const auto &output : graphInfo.GetOutputMap()) {
-    MlirType t = contextCache.ConvertTypeProto(&output.second.type());
+    MlirType t = contextCache.ConvertTypeProto(&output.second->type());
     if (mlirTypeIsNull(t)) {
       return failure;
     }
@@ -1615,7 +1629,8 @@ Status NodeImporter::ImportConstantNodeValueAttr(const onnx::NodeProto &node) {
     return SetError("ONNX initializer name already present: " +
                     std::string(constName));
   }
-  graph_info_.InitializerMapEmplace(constName, valueProto->t());
+
+  graph_info_.InitializerMapEmplace(constName, &valueProto->t());
   return success;
 }
 

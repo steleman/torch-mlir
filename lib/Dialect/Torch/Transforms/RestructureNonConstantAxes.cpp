@@ -8,9 +8,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "PassDetail.h"
+
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -26,10 +26,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::Torch {
-
-#define GEN_PASS_DEF_RESTRUCTURENONCONSTANTAXES
-#include "torch-mlir/Dialect/Torch/Transforms/Passes.h.inc"
 
 namespace {
 
@@ -92,8 +88,8 @@ public:
     Type intType = rewriter.getType<Torch::IntType>();
     Type boolType = rewriter.getType<Torch::BoolType>();
     auto createInt = [&](int value) {
-      return Torch::ConstantIntOp::create(
-          rewriter, loc, intType,
+      return rewriter.create<Torch::ConstantIntOp>(
+          loc, intType,
           rewriter.getIntegerAttr(rewriter.getIntegerType(64), value));
     };
     Value zero = createInt(0);
@@ -102,24 +98,23 @@ public:
     // handle when dim is a single element list
     bool oldDimIsList = isa<Torch::ListType>(dim.getType());
     if (oldDimIsList) {
-      Value len = Torch::AtenLenTOp::create(rewriter, loc, intType, dim);
+      Value len = rewriter.create<Torch::AtenLenTOp>(loc, intType, dim);
       Value dimListIsLengthOne =
-          Torch::AtenEqIntOp::create(rewriter, loc, boolType, len, one);
-      Torch::RuntimeAssertOp::create(
-          rewriter, loc, dimListIsLengthOne,
+          rewriter.create<Torch::AtenEqIntOp>(loc, boolType, len, one);
+      rewriter.create<Torch::RuntimeAssertOp>(
+          loc, dimListIsLengthOne,
           rewriter.getStringAttr("RestructureNonConstantAxes does not support "
                                  "dim lists with more than one element"));
-      dim =
-          Torch::Aten__Getitem__TOp::create(rewriter, loc, intType, dim, zero);
+      dim = rewriter.create<Torch::Aten__Getitem__TOp>(loc, intType, dim, zero);
     }
 
     // Normalize negative dim
-    Value rank = Torch::AtenDimOp::create(rewriter, loc, intType, self);
-    Value isNegative = Torch::AtenLtIntOp::create(rewriter, loc, dim, zero);
-    Value rankOffset = Torch::AtenMulIntOp::create(
-        rewriter, loc, intType,
-        Torch::AtenIntBoolOp::create(rewriter, loc, intType, isNegative), rank);
-    dim = Torch::AtenAddIntOp::create(rewriter, loc, intType, dim, rankOffset);
+    Value rank = rewriter.create<Torch::AtenDimOp>(loc, intType, self);
+    Value isNegative = rewriter.create<Torch::AtenLtIntOp>(loc, dim, zero);
+    Value rankOffset = rewriter.create<Torch::AtenMulIntOp>(
+        loc, intType,
+        rewriter.create<Torch::AtenIntBoolOp>(loc, intType, isNegative), rank);
+    dim = rewriter.create<Torch::AtenAddIntOp>(loc, intType, dim, rankOffset);
 
     auto createConditionalMult = [&](Value self, Value multiplier,
                                      Value condition) {
@@ -130,17 +125,16 @@ public:
       // which translates to:
 
       // result = multiplier - 1
-      Value result = Torch::AtenSubIntOp::create(rewriter, loc, intType,
-                                                 multiplier, createInt(1));
+      Value result = rewriter.create<Torch::AtenSubIntOp>(
+          loc, intType, multiplier, createInt(1));
       // result = result * condition
-      result = Torch::AtenMulIntOp::create(rewriter, loc, intType, result,
-                                           condition);
-      // result = result + 1
-      result = Torch::AtenAddIntOp::create(rewriter, loc, intType, result,
-                                           createInt(1));
-      // result = self * result
       result =
-          Torch::AtenMulIntOp::create(rewriter, loc, intType, self, result);
+          rewriter.create<Torch::AtenMulIntOp>(loc, intType, result, condition);
+      // result = result + 1
+      result = rewriter.create<Torch::AtenAddIntOp>(loc, intType, result,
+                                                    createInt(1));
+      // result = self * result
+      result = rewriter.create<Torch::AtenMulIntOp>(loc, intType, self, result);
       return result;
     };
 
@@ -152,29 +146,29 @@ public:
     for (size_t i = 0; i < selfTy.getSizes().size(); ++i) {
       Value idx = createInt(i);
       Value size =
-          Torch::AtenSizeIntOp::create(rewriter, loc, intType, self, idx);
+          rewriter.create<Torch::AtenSizeIntOp>(loc, intType, self, idx);
 
       Value isBeforeDim =
-          Torch::AtenLtIntOp::create(rewriter, loc, boolType, idx, dim);
+          rewriter.create<Torch::AtenLtIntOp>(loc, boolType, idx, dim);
       isBeforeDim =
-          Torch::AtenIntBoolOp::create(rewriter, loc, intType, isBeforeDim);
+          rewriter.create<Torch::AtenIntBoolOp>(loc, intType, isBeforeDim);
       Value isAfterDim =
-          Torch::AtenGtIntOp::create(rewriter, loc, boolType, idx, dim);
+          rewriter.create<Torch::AtenGtIntOp>(loc, boolType, idx, dim);
       isAfterDim =
-          Torch::AtenIntBoolOp::create(rewriter, loc, intType, isAfterDim);
+          rewriter.create<Torch::AtenIntBoolOp>(loc, intType, isAfterDim);
 
       Value isEqualToDim =
-          Torch::AtenEqIntOp::create(rewriter, loc, boolType, idx, dim);
+          rewriter.create<Torch::AtenEqIntOp>(loc, boolType, idx, dim);
       isEqualToDim =
-          Torch::AtenIntBoolOp::create(rewriter, loc, intType, isEqualToDim);
+          rewriter.create<Torch::AtenIntBoolOp>(loc, intType, isEqualToDim);
       dimSize = createConditionalMult(dimSize, size, isEqualToDim);
 
       beforeProd = createConditionalMult(beforeProd, size, isBeforeDim);
       afterProd = createConditionalMult(afterProd, size, isAfterDim);
     }
 
-    Value newShape = Torch::PrimListConstructOp::create(
-        rewriter, loc, rewriter.getType<Torch::ListType>(intType),
+    Value newShape = rewriter.create<Torch::PrimListConstructOp>(
+        loc, rewriter.getType<Torch::ListType>(intType),
         ValueRange{beforeProd, dimSize, afterProd});
 
     // Reshape input
@@ -183,15 +177,14 @@ public:
                              Torch::kUnknownSize},
         selfTy.getDtype());
     Value reshapedSelf =
-        Torch::AtenViewOp::create(rewriter, loc, newSelfTy, self, newShape);
+        rewriter.create<Torch::AtenViewOp>(loc, newSelfTy, self, newShape);
 
     // construct new operange range where self is replaced with reshapedSelf
     // tensor, and dim is replaced with 1
     Value newDim;
     if (oldDimIsList) {
-      newDim = Torch::PrimListConstructOp::create(
-          rewriter, loc, rewriter.getType<Torch::ListType>(intType),
-          ValueRange{one});
+      newDim = rewriter.create<Torch::PrimListConstructOp>(
+          loc, rewriter.getType<Torch::ListType>(intType), ValueRange{one});
     } else {
       newDim = one;
     }
@@ -215,7 +208,7 @@ public:
             resultTy.getDtype()));
 
     Value newReductionOp =
-        SrcOp::create(rewriter, loc, newResultTy, newOperands, op->getAttrs());
+        rewriter.create<SrcOp>(loc, newResultTy, newOperands, op->getAttrs());
 
     // Reshape the result back to original shape
     ValueTensorType oldResultTy =
@@ -224,11 +217,10 @@ public:
     for (auto dim : oldResultTy.getSizes()) {
       shapeValues.push_back(createInt(dim));
     }
-    Value originalShape = Torch::PrimListConstructOp::create(
-        rewriter, loc, rewriter.getType<Torch::ListType>(intType), shapeValues);
-    Value result =
-        Torch::AtenViewOp::create(rewriter, loc, op->getResult(0).getType(),
-                                  newReductionOp, originalShape);
+    Value originalShape = rewriter.create<Torch::PrimListConstructOp>(
+        loc, rewriter.getType<Torch::ListType>(intType), shapeValues);
+    Value result = rewriter.create<Torch::AtenViewOp>(
+        loc, op->getResult(0).getType(), newReductionOp, originalShape);
 
     rewriter.replaceOp(op, result);
     return success();
@@ -255,8 +247,7 @@ void populateRestructureNonConstantAxesPattern(RewritePatternSet &patterns,
 }
 
 class RestructureNonConstantAxesPass
-    : public impl::RestructureNonConstantAxesBase<
-          RestructureNonConstantAxesPass> {
+    : public RestructureNonConstantAxesBase<RestructureNonConstantAxesPass> {
 public:
   RestructureNonConstantAxesPass() = default;
 
@@ -281,8 +272,6 @@ public:
 } // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>>
-createRestructureNonConstantAxesPass() {
+mlir::torch::Torch::createRestructureNonConstantAxesPass() {
   return std::make_unique<RestructureNonConstantAxesPass>();
 }
-
-} // namespace mlir::torch::Torch

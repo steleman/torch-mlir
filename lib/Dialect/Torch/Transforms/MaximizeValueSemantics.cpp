@@ -7,10 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "PassDetail.h"
+
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
 #include "torch-mlir/Dialect/Torch/Transforms/Passes.h"
@@ -19,10 +19,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::Torch {
-
-#define GEN_PASS_DEF_MAXIMIZEVALUESEMANTICS
-#include "torch-mlir/Dialect/Torch/Transforms/Passes.h.inc"
 
 static Value assertNonValueTensor(Value tensor) {
   assert(isa<NonValueTensorType>(tensor.getType()) &&
@@ -368,7 +364,7 @@ public:
 
 namespace {
 class MaximizeValueSemanticsPass
-    : public impl::MaximizeValueSemanticsBase<MaximizeValueSemanticsPass> {
+    : public MaximizeValueSemanticsBase<MaximizeValueSemanticsPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
     auto func = getOperation();
@@ -383,8 +379,6 @@ class MaximizeValueSemanticsPass
 } // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>>
-createMaximizeValueSemanticsPass() {
+mlir::torch::Torch::createMaximizeValueSemanticsPass() {
   return std::make_unique<MaximizeValueSemanticsPass>();
 }
-
-} // namespace mlir::torch::Torch

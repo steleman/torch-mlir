@@ -7,9 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PassDetail.h"
+
 #include "SimplifyAbstractInterpCalculationsUtils.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "torch-mlir/Dialect/Torch/Transforms/Passes.h"
 #include "torch-mlir/Dialect/Torch/Utils/TorchUpstream.h"
@@ -18,10 +18,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::Torch {
-
-#define GEN_PASS_DEF_SIMPLIFYDTYPECALCULATIONS
-#include "torch-mlir/Dialect/Torch/Transforms/Passes.h.inc"
 
 static LogicalResult refineDtypeCalculateResult(DtypeCalculateOp op,
                                                 int resultNum,
@@ -196,8 +192,7 @@ public:
 
 namespace {
 class SimplifyDtypeCalculationsPass
-    : public impl::SimplifyDtypeCalculationsBase<
-          SimplifyDtypeCalculationsPass> {
+    : public SimplifyDtypeCalculationsBase<SimplifyDtypeCalculationsPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
 
@@ -227,8 +222,6 @@ class SimplifyDtypeCalculationsPass
 } // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>>
-createSimplifyDtypeCalculationsPass() {
+mlir::torch::Torch::createSimplifyDtypeCalculationsPass() {
   return std::make_unique<SimplifyDtypeCalculationsPass>();
 }
-
-} // namespace mlir::torch::Torch

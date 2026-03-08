@@ -9,15 +9,13 @@
 
 #include "torch-mlir/Conversion/TorchToArith/TorchToArith.h"
 
+#include "../PassDetail.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/DialectResourceBlobManager.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "torch-mlir/Conversion/Passes.h"
 #include "torch-mlir/Conversion/Utils/Utils.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
@@ -27,10 +25,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch {
-
-#define GEN_PASS_DEF_CONVERTTORCHTOARITH
-#include "torch-mlir/Conversion/Passes.h.inc"
 
 // -----------------------------------------------------------------------------
 // Patterns (as this grows, it should be organized into multiple files)
@@ -47,7 +41,7 @@ public:
   matchAndRewrite(AtenDimOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto rank =
-        tensor::RankOp::create(rewriter, op->getLoc(), adaptor.getSelf());
+        rewriter.create<tensor::RankOp>(op->getLoc(), adaptor.getSelf());
     rewriter.replaceOpWithNewOp<arith::IndexCastOp>(
         op, getTypeConverter()->convertType(op.getType()), rank);
     return success();
@@ -102,8 +96,8 @@ public:
     Value a = adaptor.getA();
     rewriter.replaceOpWithNewOp<arith::SubIOp>(
         op,
-        arith::ConstantIntOp::create(rewriter, op.getLoc(), /*value=*/0,
-                                     /*bitwidth=*/64),
+        rewriter.create<arith::ConstantIntOp>(op.getLoc(), /*value=*/0,
+                                              /*bitwidth=*/64),
         a);
     return success();
   }
@@ -112,7 +106,7 @@ public:
 
 namespace {
 template <typename AtenOp, typename UnaryOp>
-class ConvertAtenUnaryOp : public OpConversionPattern<AtenOp> {
+class ConvertAtenUnaryOpToFloatMathOp : public OpConversionPattern<AtenOp> {
 public:
   using OpConversionPattern<AtenOp>::OpConversionPattern;
   LogicalResult
@@ -125,7 +119,7 @@ public:
         this->getTypeConverter()->convertType(op->getResult(0).getType());
     if (!isa<mlir::FloatType>(input.getType()))
       input = convertScalarToDtype(rewriter, loc, input, rewriter.getF64Type());
-    Value result = UnaryOp::create(rewriter, loc, input);
+    Value result = rewriter.create<UnaryOp>(loc, input);
     rewriter.replaceOp(op,
                        convertScalarToDtype(rewriter, loc, result, resultType));
     return success();
@@ -134,13 +128,12 @@ public:
 } // namespace
 
 namespace {
-template <typename AtenOp>
-class ConvertAtenDivOp : public OpConversionPattern<AtenOp> {
+class ConvertAtenDivIntOp : public OpConversionPattern<AtenDivIntOp> {
 public:
-  using OpConversionPattern<AtenOp>::OpConversionPattern;
-  using OpAdaptor = typename AtenOp::Adaptor;
+  using OpConversionPattern<AtenDivIntOp>::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(AtenOp op, OpAdaptor adaptor,
+  matchAndRewrite(AtenDivIntOp op,
+                  typename OpConversionPattern<AtenDivIntOp>::OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Value a = convertScalarToDtype(rewriter, loc, adaptor.getA(),
@@ -307,13 +300,11 @@ public:
 } // namespace
 
 namespace {
-template <typename AtenOp, typename ArithFOp, typename ArithIOp>
-class ConvertAtenBinaryScalarOp : public OpConversionPattern<AtenOp> {
+class ConvertAtenAddOp : public OpConversionPattern<AtenAddOp> {
 public:
-  using OpConversionPattern<AtenOp>::OpConversionPattern;
-  using OpAdaptor = typename AtenOp::Adaptor;
+  using OpConversionPattern::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(AtenOp op, OpAdaptor adaptor,
+  matchAndRewrite(AtenAddOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Type resultType =
@@ -323,9 +314,9 @@ public:
     Value operandB =
         convertScalarToDtype(rewriter, loc, adaptor.getB(), resultType);
     if (isa<mlir::FloatType>(resultType)) {
-      rewriter.replaceOpWithNewOp<ArithFOp>(op, operandA, operandB);
+      rewriter.replaceOpWithNewOp<arith::AddFOp>(op, operandA, operandB);
     } else if (isa<mlir::IntegerType>(resultType)) {
-      rewriter.replaceOpWithNewOp<ArithIOp>(op, operandA, operandB);
+      rewriter.replaceOpWithNewOp<arith::AddIOp>(op, operandA, operandB);
     } else {
       return rewriter.notifyMatchFailure(
           op, "unimplemented: only support integer or float result type");
@@ -356,7 +347,7 @@ public:
         rewriter, loc, this->getTypeConverter(), inputListTorchBool);
     result = inputList[0];
     for (unsigned i = 1; i < inputList.size(); i++)
-      result = BinOp::create(rewriter, loc, result, inputList[i]);
+      result = rewriter.create<BinOp>(loc, result, inputList[i]);
     rewriter.replaceOp(op, result);
     return success();
   }
@@ -394,15 +385,15 @@ public:
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     Type inputType = adaptor.getA().getType();
-    Value cstZero = arith::ConstantOp::create(rewriter, loc,
-                                              rewriter.getZeroAttr(inputType));
+    Value cstZero = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getZeroAttr(inputType));
     Value cstTrue =
-        arith::ConstantOp::create(rewriter, loc, rewriter.getBoolAttr(true));
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true));
     Value cstFalse =
-        arith::ConstantOp::create(rewriter, loc, rewriter.getBoolAttr(false));
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
 
     Value cmpPred;
-    cmpPred = CmpOpTy::create(rewriter, loc, Pred, adaptor.getA(), cstZero);
+    cmpPred = rewriter.create<CmpOpTy>(loc, Pred, adaptor.getA(), cstZero);
     rewriter.replaceOpWithNewOp<arith::SelectOp>(op, cmpPred, cstTrue,
                                                  cstFalse);
     return success();
@@ -416,7 +407,7 @@ public:
 
 namespace {
 class ConvertTorchToArith
-    : public impl::ConvertTorchToArithBase<ConvertTorchToArith> {
+    : public ConvertTorchToArithBase<ConvertTorchToArith> {
 public:
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<func::FuncDialect>();
@@ -500,23 +491,10 @@ public:
     patterns.add<ConvertAtenCastOp<AtenFloatScalarOp>>(typeConverter, context);
     patterns.add<ConvertAtenCastOp<AtenIntScalarOp>>(typeConverter, context);
 
-    target.addIllegalOp<AtenAddOp, AtenSubOp, AtenMulOp>();
-    patterns.add<
-        ConvertAtenBinaryScalarOp<AtenAddOp, arith::AddFOp, arith::AddIOp>>(
-        typeConverter, context);
-    patterns.add<
-        ConvertAtenBinaryScalarOp<AtenSubOp, arith::SubFOp, arith::SubIOp>>(
-        typeConverter, context);
-    patterns.add<
-        ConvertAtenBinaryScalarOp<AtenMulOp, arith::MulFOp, arith::MulIOp>>(
-        typeConverter, context);
-
+    target.addIllegalOp<AtenAddOp>();
+    patterns.add<ConvertAtenAddOp>(typeConverter, context);
     target.addIllegalOp<AtenNegIntOp>();
     patterns.add<ConvertAtenNegIntOp>(typeConverter, context);
-    target.addIllegalOp<AtenNegFloatOp>();
-    patterns.add<ConvertAtenUnaryOp<AtenNegFloatOp, arith::NegFOp>>(
-        typeConverter, context);
-
     target.addIllegalOp<AtenAddIntOp, AtenAddFloatIntOp, AtenSubIntOp,
                         AtenMulIntOp, AtenRemainderIntOp, AtenMulIntFloatOp,
                         AtenMulFloatIntOp>();
@@ -539,12 +517,11 @@ public:
         typeConverter, context);
     patterns.add<ConvertAtenBinaryOp<AtenMulFloatOp, arith::MulFOp>>(
         typeConverter, context);
-
-    target.addIllegalOp<AtenDivOp, AtenDivIntOp, AtenDivFloatOp>();
-    patterns.add<ConvertAtenDivOp<AtenDivOp>>(typeConverter, context);
-    patterns.add<ConvertAtenDivOp<AtenDivIntOp>>(typeConverter, context);
-    patterns.add<ConvertAtenDivOp<AtenDivFloatOp>>(typeConverter, context);
-
+    target.addIllegalOp<AtenDivIntOp>();
+    patterns.add<ConvertAtenDivIntOp>(typeConverter, context);
+    target.addIllegalOp<AtenDivFloatOp>();
+    patterns.add<ConvertAtenBinaryOp<AtenDivFloatOp, arith::DivFOp>>(
+        typeConverter, context);
     target.addIllegalOp<AtenFloordivIntOp>();
     patterns.add<ConvertAtenBinaryOp<AtenFloordivIntOp, arith::FloorDivSIOp>>(
         typeConverter, context);
@@ -562,11 +539,12 @@ public:
         typeConverter, context);
     patterns.add<ConvertAtenBinaryOp<AtenNeBoolOp, arith::XOrIOp>>(
         typeConverter, context);
-    patterns.add<ConvertAtenUnaryOp<AtenCeilFloatOp, math::CeilOp>>(
-        typeConverter, context);
+    patterns
+        .add<ConvertAtenUnaryOpToFloatMathOp<AtenCeilFloatOp, math::CeilOp>>(
+            typeConverter, context);
     target.addIllegalOp<AtenSqrtIntOp>();
-    patterns.add<ConvertAtenUnaryOp<AtenSqrtIntOp, math::SqrtOp>>(typeConverter,
-                                                                  context);
+    patterns.add<ConvertAtenUnaryOpToFloatMathOp<AtenSqrtIntOp, math::SqrtOp>>(
+        typeConverter, context);
     target.addIllegalOp<AtenAnyBoolOp, AtenAllBoolOp>();
     patterns.add<ConvertAtenAnyOp>(typeConverter, context);
     patterns.add<ConvertAtenAllOp>(typeConverter, context);
@@ -587,8 +565,7 @@ public:
 };
 } // namespace
 
-std::unique_ptr<OperationPass<func::FuncOp>> createConvertTorchToArithPass() {
+std::unique_ptr<OperationPass<func::FuncOp>>
+mlir::torch::createConvertTorchToArithPass() {
   return std::make_unique<ConvertTorchToArith>();
 }
-
-} // namespace mlir::torch

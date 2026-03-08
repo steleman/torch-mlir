@@ -8,8 +8,9 @@ endif()
 # PyTorch
 # Configure PyTorch if we have any features enabled which require it.
 ################################################################################
-if(TORCH_MLIR_ENABLE_JIT_IR_IMPORTER OR TORCH_MLIR_ENABLE_LTC)
+message(STATUS "TORCH_MLIR_USE_INSTALLED_PYTORCH: ${TORCH_MLIR_USE_INSTALLED_PYTORCH}")
 
+if(TORCH_MLIR_ENABLE_JIT_IR_IMPORTER OR TORCH_MLIR_ENABLE_LTC)
   if (NOT TORCH_MLIR_USE_INSTALLED_PYTORCH)
     # Source builds
     message(STATUS "Building libtorch from source (features depend on it and NOT TORCH_MLIR_USE_INSTALLED_PYTORCH)")

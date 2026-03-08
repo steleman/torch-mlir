@@ -9,12 +9,10 @@
 
 #include "torch-mlir/Conversion/TorchToSCF/TorchToSCF.h"
 
+#include "../PassDetail.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "torch-mlir/Conversion/Passes.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchTypes.h"
@@ -23,10 +21,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch {
-
-#define GEN_PASS_DEF_CONVERTTORCHTOSCF
-#include "torch-mlir/Conversion/Passes.h.inc"
 
 namespace {
 class ConvertTorchPrimIfYieldOp : public OpConversionPattern<PrimIfYieldOp> {
@@ -53,9 +47,9 @@ public:
                                                 newResultTypes)))
       return rewriter.notifyMatchFailure(op,
                                          "could not convert PrimIfOp outputs");
-    auto scfIf = scf::IfOp::create(rewriter, op->getLoc(), newResultTypes,
-                                   adaptor.getCondition(),
-                                   /*withElseRegion=*/true);
+    auto scfIf = rewriter.create<scf::IfOp>(op->getLoc(), newResultTypes,
+                                            adaptor.getCondition(),
+                                            /*withElseRegion=*/true);
     auto inlineIfCase = [&](Region &srcRegion, Region &dstRegion) {
       rewriter.inlineRegionBefore(srcRegion, dstRegion, dstRegion.begin());
       rewriter.eraseBlock(&dstRegion.back());
@@ -95,8 +89,8 @@ public:
     ValueRange iterArgsInit = adaptor.getIterArgsInit();
     SmallVector<Value> scfWhileOpOperands{condition};
     scfWhileOpOperands.append(iterArgsInit.begin(), iterArgsInit.end());
-    auto scfWhileOp = scf::WhileOp::create(rewriter, op->getLoc(),
-                                           newResultTypes, scfWhileOpOperands);
+    auto scfWhileOp = rewriter.create<scf::WhileOp>(
+        op->getLoc(), newResultTypes, scfWhileOpOperands);
 
     // Populate the before region of the scf.while operation. The `before`
     // region will have only one block and the arguments of the block must match
@@ -114,8 +108,8 @@ public:
     rewriter.setInsertionPointToEnd(beforeBlock);
     // Fetch the condition passed as the iter argument. Pass rest of the
     // arguments to the after block.
-    auto scfConditionOp = scf::ConditionOp::create(
-        rewriter, op.getLoc(), beforeBlock->getArgument(0),
+    auto scfConditionOp = rewriter.create<scf::ConditionOp>(
+        op.getLoc(), beforeBlock->getArgument(0),
         beforeBlock->getArguments().drop_front());
 
     // Populate the after region.
@@ -156,10 +150,6 @@ public:
           targetType = Torch::IntType::get(op->getContext());
         torchArg = typeConverter->materializeSourceConversion(
             rewriter, scfWhileOp.getLoc(), targetType, {to});
-      } else if (auto tty = dyn_cast<RankedTensorType>(targetType)) {
-        targetType = op.getIterArgsInit()[barg.index()].getType();
-        torchArg = typeConverter->materializeSourceConversion(
-            rewriter, scfWhileOp.getLoc(), targetType, {to});
       }
       if (!torchArg)
         return rewriter.notifyMatchFailure(op,
@@ -183,6 +173,14 @@ public:
                                              "unsupported type of the operand");
         loopConditionIterArgs.push_back(shouldContinue);
         for (auto torchArg : primLoopConditionOp.getIterArgs()) {
+          Type torchType = torchArg.getType();
+
+          // If the argument is a torch tensor, directly add it in the list of
+          // iter args.
+          if (isa<Torch::BaseTensorType>(torchType)) {
+            loopConditionIterArgs.push_back(torchArg);
+            continue;
+          }
           Value arg = typeConverter->materializeTargetConversion(
               rewriter, scfWhileOp->getLoc(),
               typeConverter->convertType(torchArg.getType()), {torchArg});
@@ -191,8 +189,8 @@ public:
                 op, "unsupported type of the operand");
           loopConditionIterArgs.push_back(arg);
         }
-        scf::YieldOp::create(rewriter, scfWhileOp.getLoc(),
-                             loopConditionIterArgs);
+        rewriter.create<scf::YieldOp>(scfWhileOp.getLoc(),
+                                      loopConditionIterArgs);
 
       } else {
         operation.moveBefore(afterBlock, afterBlock->end());
@@ -227,13 +225,13 @@ public:
     // Calculate the lower bound, upper bound and step indices. Currently only
     // lower-bound = 0 and step = 1 is supported.
     Location loc = op.getLoc();
-    Value lowerBoundIndex = arith::ConstantIndexOp::create(rewriter, loc, 0);
-    Value stepIndex = arith::ConstantIndexOp::create(rewriter, loc, 1);
-    Value upperBoundIndex = arith::IndexCastOp::create(
-        rewriter, loc, rewriter.getIndexType(), adaptor.getMaxTripCount());
+    Value lowerBoundIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value stepIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value upperBoundIndex = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIndexType(), adaptor.getMaxTripCount());
     auto scfForOp =
-        scf::ForOp::create(rewriter, loc, lowerBoundIndex, upperBoundIndex,
-                           stepIndex, adaptor.getIterArgsInit());
+        rewriter.create<scf::ForOp>(loc, lowerBoundIndex, upperBoundIndex,
+                                    stepIndex, adaptor.getIterArgsInit());
 
     SmallVector<Type> regionArgTypes;
     SmallVector<Location> regionArgLocs;
@@ -255,8 +253,8 @@ public:
     for (const auto &barg : enumerate(op.getRegion().front().getArguments())) {
       Value to = block->getArgument(barg.index());
       if (isa<mlir::IndexType>(to.getType()))
-        to = arith::IndexCastOp::create(rewriter, loc, rewriter.getI64Type(),
-                                        to);
+        to =
+            rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), to);
       Type targetType = to.getType();
       Value torchArg = to;
 
@@ -304,8 +302,7 @@ public:
                 op, "unsupported type of the operand");
           loopConditionIterArgs.push_back(arg);
         }
-        scf::YieldOp::create(rewriter, scfForOp.getLoc(),
-                             loopConditionIterArgs);
+        rewriter.create<scf::YieldOp>(scfForOp.getLoc(), loopConditionIterArgs);
       } else {
         operation.moveBefore(block, block->end());
       }
@@ -318,8 +315,7 @@ public:
 } // namespace
 
 namespace {
-class ConvertTorchToSCF
-    : public impl::ConvertTorchToSCFBase<ConvertTorchToSCF> {
+class ConvertTorchToSCF : public ConvertTorchToSCFBase<ConvertTorchToSCF> {
 public:
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<scf::SCFDialect, arith::ArithDialect>();
@@ -352,8 +348,7 @@ public:
 };
 } // namespace
 
-std::unique_ptr<OperationPass<func::FuncOp>> createConvertTorchToSCFPass() {
+std::unique_ptr<OperationPass<func::FuncOp>>
+mlir::torch::createConvertTorchToSCFPass() {
   return std::make_unique<ConvertTorchToSCF>();
 }
-
-} // namespace mlir::torch

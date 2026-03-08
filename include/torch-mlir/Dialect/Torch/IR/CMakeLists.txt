@@ -4,12 +4,19 @@ mlir_tablegen(TorchOps.cpp.inc -gen-op-defs)
 mlir_tablegen(TorchDialect.h.inc -gen-dialect-decls -dialect=torch)
 mlir_tablegen(TorchDialect.cpp.inc -gen-dialect-defs -dialect=torch)
 add_public_tablegen_target(MLIRTorchOpsIncGen)
+
+
+if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
 add_dependencies(mlir-headers MLIRTorchOpsIncGen)
+endif()
 
 set(LLVM_TARGET_DEFINITIONS TorchTypes.td)
 mlir_tablegen(TorchTypes.h.inc -gen-typedef-decls)
 mlir_tablegen(TorchTypes.cpp.inc -gen-typedef-defs)
 add_public_tablegen_target(MLIRTorchTypesIncGen)
 
+if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
 add_mlir_doc(TorchDialect TorchDialect Torch/ -gen-dialect-doc)
 add_mlir_doc(TorchOps TorchOps Torch/ -gen-op-doc)
+endif()
+

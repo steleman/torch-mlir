@@ -7,13 +7,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PassDetail.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Iterators.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchTypes.h"
@@ -24,10 +23,6 @@
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::Torch;
-namespace mlir::torch::Torch {
-
-#define GEN_PASS_DEF_SCALARIZESHAPES
-#include "torch-mlir/Dialect/Torch/Transforms/Passes.h.inc"
 
 namespace {
 
@@ -43,13 +38,13 @@ LogicalResult materializeFolds(ImplicitLocOpBuilder b,
     if (auto attr = dyn_cast<Attribute>(f)) {
       if (auto val = dyn_cast<FloatAttr>(attr)) {
         values.push_back(
-            Torch::ConstantFloatOp::create(b, APFloat(val.getValueAsDouble())));
+            b.create<Torch::ConstantFloatOp>(APFloat(val.getValueAsDouble())));
         continue;
       }
 
       if (auto val = dyn_cast<IntegerAttr>(attr)) {
         values.push_back(
-            Torch::ConstantIntOp::create(b, val.getValue().getSExtValue()));
+            b.create<Torch::ConstantIntOp>(val.getValue().getSExtValue()));
         continue;
       }
     }
@@ -153,12 +148,12 @@ LogicalResult getListFromTensor(Value value, SmallVector<OpFoldResult> &vals) {
 
 Value constructAtenTensorOpFromList(ImplicitLocOpBuilder b, mlir::Type resultTy,
                                     SmallVector<Value> &listValues) {
-  auto dimList = Torch::PrimListConstructOp::create(
-      b, b.getType<Torch::ListType>(listValues.front().getType()), listValues);
-  Value cstNone = Torch::ConstantNoneOp::create(b);
-  Value cstFalse = Torch::ConstantBoolOp::create(b, b.getBoolAttr(false));
-  return Torch::AtenTensorOp::create(b, resultTy, dimList, cstNone, cstNone,
-                                     cstFalse);
+  auto dimList = b.create<Torch::PrimListConstructOp>(
+      b.getType<Torch::ListType>(listValues.front().getType()), listValues);
+  Value cstNone = b.create<Torch::ConstantNoneOp>();
+  Value cstFalse = b.create<Torch::ConstantBoolOp>(b.getBoolAttr(false));
+  return b.create<Torch::AtenTensorOp>(resultTy, dimList, cstNone, cstNone,
+                                       cstFalse);
 }
 } // namespace
 
@@ -195,13 +190,12 @@ public:
     if (failed(materializeFolds(b, fillFold, fillVals)))
       return failure();
 
-    Value size = Torch::ConstantIntOp::create(b, ty.getSizes().front());
-    Value sizeList = Torch::PrimListConstructOp::create(
-        b,
+    Value size = b.create<Torch::ConstantIntOp>(ty.getSizes().front());
+    Value sizeList = b.create<Torch::PrimListConstructOp>(
         rewriter.getType<Torch::ListType>(rewriter.getType<Torch::IntType>()),
         size);
-    Value none = Torch::ConstantNoneOp::create(b);
-    Value cstFalse = Torch::ConstantBoolOp::create(b, false);
+    Value none = b.create<Torch::ConstantNoneOp>();
+    Value cstFalse = b.create<Torch::ConstantBoolOp>(false);
     rewriter.replaceOpWithNewOp<AtenFullOp>(op, ty, sizeList, fillVals.front(),
                                             none, none, none, cstFalse);
     return success();
@@ -226,7 +220,7 @@ public:
     int64_t rank = selfTy.getSizes().size();
     SmallVector<OpFoldResult> dims;
     for (int64_t i = 0; i < rank; ++i) {
-      auto iv = Torch::ConstantIntOp::create(b, i);
+      auto iv = b.create<Torch::ConstantIntOp>(i);
       dims.push_back(b.createOrFold<Torch::AtenSizeIntOp>(
           rewriter.getType<Torch::IntType>(), self, iv));
     }
@@ -629,16 +623,16 @@ public:
     auto rank0BoolTy = rewriter.getType<Torch::ValueTensorType>(
         ArrayRef<int64_t>({}), conditionTy.getDtype());
     for (uint64_t i = 0; i < selfList.size(); i++) {
-      Value rank0Cond = Torch::PrimNumToTensorScalarOp::create(
-          b, rank0BoolTy, conditionList[i]);
+      Value rank0Cond = b.create<Torch::PrimNumToTensorScalarOp>(
+          rank0BoolTy, conditionList[i]);
       Value rank0Self =
-          Torch::PrimNumToTensorScalarOp::create(b, rank0IntTy, selfList[i]);
+          b.create<Torch::PrimNumToTensorScalarOp>(rank0IntTy, selfList[i]);
       Value rank0Other =
-          Torch::PrimNumToTensorScalarOp::create(b, rank0IntTy, otherList[i]);
-      Value rank0Where = AtenWhereSelfOp::create(b, rank0IntTy, rank0Cond,
-                                                 rank0Self, rank0Other);
-      whereVals.push_back(AtenItemOp::create(
-          b, rewriter.getType<Torch::IntType>(), rank0Where));
+          b.create<Torch::PrimNumToTensorScalarOp>(rank0IntTy, otherList[i]);
+      Value rank0Where = b.create<AtenWhereSelfOp>(rank0IntTy, rank0Cond,
+                                                   rank0Self, rank0Other);
+      whereVals.push_back(
+          b.create<AtenItemOp>(rewriter.getType<Torch::IntType>(), rank0Where));
     }
     Value result = constructAtenTensorOpFromList(b, op.getType(), whereVals);
     rewriter.replaceOp(op, result);
@@ -1015,23 +1009,22 @@ public:
     if (auto mulOp = op.getA().getDefiningOp<AtenMulIntOp>()) {
       Value self = mulOp.getA();
       Value other = mulOp.getB();
-      Value selfEq =
-          AtenEqIntOp::create(rewriter, op.getLoc(), self, op.getB());
+      Value selfEq = rewriter.create<AtenEqIntOp>(op.getLoc(), self, op.getB());
       Value otherEq =
-          AtenEqIntOp::create(rewriter, op.getLoc(), other, op.getB());
+          rewriter.create<AtenEqIntOp>(op.getLoc(), other, op.getB());
       rewriter.replaceOpWithNewOp<Aten__Or__BoolOp>(op, selfEq, otherEq);
       return success();
     }
 
     // if lhs is size.int op, assert size > 0 and replace with false.
     if (auto sizeOp = op.getA().getDefiningOp<AtenSizeIntOp>()) {
-      Value selfGtOther = AtenGtIntOp::create(
-          rewriter, op.getLoc(), op.getType(), op.getA(), op.getB());
-      Torch::RuntimeAssertOp::create(
-          rewriter, op.getLoc(), selfGtOther,
+      Value selfGtOther = rewriter.create<AtenGtIntOp>(
+          op.getLoc(), op.getType(), op.getA(), op.getB());
+      rewriter.create<Torch::RuntimeAssertOp>(
+          op.getLoc(), selfGtOther,
           rewriter.getStringAttr("Expected dim size > 0."));
       Value cstFalse =
-          Torch::ConstantBoolOp::create(rewriter, op.getLoc(), false);
+          rewriter.create<Torch::ConstantBoolOp>(op.getLoc(), false);
       rewriter.replaceOp(op, cstFalse);
       return success();
     }
@@ -1076,16 +1069,16 @@ public:
     auto loc = op.getLoc();
     SmallVector<Value> sizes;
     for (auto size : resultTy.getSizes())
-      sizes.push_back(Torch::ConstantIntOp::create(
-          rewriter, loc, rewriter.getI64IntegerAttr(size)));
+      sizes.push_back(rewriter.create<Torch::ConstantIntOp>(
+          loc, rewriter.getI64IntegerAttr(size)));
 
-    Value sizeList = Torch::PrimListConstructOp::create(
-        rewriter, loc,
+    Value sizeList = rewriter.create<Torch::PrimListConstructOp>(
+        loc,
         rewriter.getType<Torch::ListType>(rewriter.getType<Torch::IntType>()),
         sizes);
 
-    Value none = Torch::ConstantNoneOp::create(rewriter, loc);
-    Value cstFalse = Torch::ConstantBoolOp::create(rewriter, loc, false);
+    Value none = rewriter.create<Torch::ConstantNoneOp>(loc);
+    Value cstFalse = rewriter.create<Torch::ConstantBoolOp>(loc, false);
     rewriter.replaceOpWithNewOp<AtenFullOp>(
         op, resultTy, sizeList, elements.front(), none, none, none, cstFalse);
     return success();
@@ -1114,16 +1107,16 @@ public:
       }
       SmallVector<Value> sizes;
       for (int i = 0, s = resultTy.getSizes().size(); i < s; ++i)
-        sizes.push_back(Torch::ConstantIntOp::create(
-            rewriter, op.getLoc(), rewriter.getType<Torch::IntType>(),
+        sizes.push_back(rewriter.create<Torch::ConstantIntOp>(
+            op.getLoc(), rewriter.getType<Torch::IntType>(),
             rewriter.getI64IntegerAttr(i)));
 
-      Value sizeList = Torch::PrimListConstructOp::create(
-          rewriter, op.getLoc(),
+      Value sizeList = rewriter.create<Torch::PrimListConstructOp>(
+          op.getLoc(),
           rewriter.getType<Torch::ListType>(rewriter.getType<Torch::IntType>()),
           sizes);
 
-      Value none = Torch::ConstantNoneOp::create(rewriter, op.getLoc());
+      Value none = rewriter.create<Torch::ConstantNoneOp>(op.getLoc());
       rewriter.replaceOpWithNewOp<Torch::AtenFullOp>(op, resultTy, sizeList,
                                                      atenFull.getFillValue(),
                                                      none, none, none, none);
@@ -1217,16 +1210,16 @@ public:
     if (auto atenFull = op.getSelf().getDefiningOp<AtenFullOp>()) {
       SmallVector<Value> sizes;
       for (int i = 0, s = resultTy.getSizes().size(); i < s; ++i)
-        sizes.push_back(Torch::ConstantIntOp::create(
-            rewriter, op.getLoc(), rewriter.getType<Torch::IntType>(),
+        sizes.push_back(rewriter.create<Torch::ConstantIntOp>(
+            op.getLoc(), rewriter.getType<Torch::IntType>(),
             rewriter.getI64IntegerAttr(i)));
 
-      Value sizeList = Torch::PrimListConstructOp::create(
-          rewriter, op.getLoc(),
+      Value sizeList = rewriter.create<Torch::PrimListConstructOp>(
+          op.getLoc(),
           rewriter.getType<Torch::ListType>(rewriter.getType<Torch::IntType>()),
           sizes);
 
-      Value none = Torch::ConstantNoneOp::create(rewriter, op.getLoc());
+      Value none = rewriter.create<Torch::ConstantNoneOp>(op.getLoc());
       rewriter.replaceOpWithNewOp<Torch::AtenFullOp>(op, resultTy, sizeList,
                                                      atenFull.getFillValue(),
                                                      none, none, none, none);
@@ -1354,7 +1347,7 @@ public:
     // if input has 1 unmatched dim, and output has multiple, unflatten
     if (inputUnmatched == 1 && outputUnmatched > 1) {
       Value dimVal =
-          Torch::ConstantIntOp::create(rewriter, op.getLoc(), leftMatchEnd);
+          rewriter.create<Torch::ConstantIntOp>(op.getLoc(), leftMatchEnd);
       SmallVector<Value> unflattenSizes(viewSizes.begin() + leftMatchEnd,
                                         viewSizes.end() - rightMatchEnd);
       // try to convert a single dynamic size input to -1
@@ -1376,10 +1369,10 @@ public:
       // if only one size is dynamic, make it -1
       if (dynCount == 1)
         unflattenSizes[dynIdx] =
-            Torch::ConstantIntOp::create(rewriter, op.getLoc(), -1);
+            rewriter.create<Torch::ConstantIntOp>(op.getLoc(), -1);
 
-      Value unflattenList = Torch::PrimListConstructOp::create(
-          rewriter, op.getLoc(), op.getSize().getType(), unflattenSizes);
+      Value unflattenList = rewriter.create<Torch::PrimListConstructOp>(
+          op.getLoc(), op.getSize().getType(), unflattenSizes);
       rewriter.replaceOpWithNewOp<AtenUnflattenIntOp>(
           op, op.getType(), op.getSelf(), dimVal, unflattenList);
       return success();
@@ -1387,11 +1380,10 @@ public:
     // if multiple unmatched input dims map to one output dim, flatten
     if (inputUnmatched > 1 && outputUnmatched == 1) {
       Value startDim =
-          Torch::ConstantIntOp::create(rewriter, op.getLoc(), leftMatchEnd);
+          rewriter.create<Torch::ConstantIntOp>(op.getLoc(), leftMatchEnd);
       // note: flatten end is inclusive for some reason.
       int64_t endInt = inRank - rightMatchEnd - 1;
-      Value endDim =
-          Torch::ConstantIntOp::create(rewriter, op.getLoc(), endInt);
+      Value endDim = rewriter.create<Torch::ConstantIntOp>(op.getLoc(), endInt);
       rewriter.replaceOpWithNewOp<AtenFlattenUsingIntsOp>(
           op, op.getType(), op.getSelf(), startDim, endDim);
       return success();
@@ -1539,8 +1531,7 @@ void populateScalarizationRemovePatterns(RewritePatternSet &patterns) {
 
 } // namespace
 namespace {
-class ScalarizeShapesPass
-    : public impl::ScalarizeShapesBase<ScalarizeShapesPass> {
+class ScalarizeShapesPass : public ScalarizeShapesBase<ScalarizeShapesPass> {
 public:
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect>();
@@ -1621,8 +1612,7 @@ public:
 };
 } // namespace
 
-std::unique_ptr<OperationPass<func::FuncOp>> createScalarizeShapesPass() {
+std::unique_ptr<OperationPass<func::FuncOp>>
+mlir::torch::Torch::createScalarizeShapesPass() {
   return std::make_unique<ScalarizeShapesPass>();
 }
-
-} // namespace mlir::torch::Torch

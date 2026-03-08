@@ -11,6 +11,7 @@ add_mlir_library(TorchMLIRTorchDialect
   DEPENDS
   MLIRTorchOpsIncGen
   MLIRTorchTypesIncGen
+  TorchMLIRTorchUtils
 
   LINK_LIBS PUBLIC
   MLIRBytecodeOpInterface
@@ -19,9 +20,11 @@ add_mlir_library(TorchMLIRTorchDialect
   MLIRFuncDialect
   MLIRIR
   MLIRSupport
+  MLIRCastInterfaces
   MLIRControlFlowInterfaces
   MLIRInferTypeOpInterface
   MLIRSideEffectInterfaces
+  TorchMLIRTorchUtils
 )
 
 torch_mlir_target_includes(TorchMLIRTorchDialect)

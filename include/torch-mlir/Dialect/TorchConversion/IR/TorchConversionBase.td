@@ -13,8 +13,7 @@
 include "mlir/IR/OpBase.td"
 
 def TorchConversion_Dialect : Dialect {
-  // `torch_conversion` is too verbose.
-  let name = "torch_c";
+  let name = "torch_conversion";
   let cppNamespace = "::mlir::torch::TorchConversion";
   let description = [{
     This dialect contains ops and transforms for converting from the Torch

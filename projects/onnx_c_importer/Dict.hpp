@@ -17,7 +17,7 @@
 
 #pragma once
 
-#include <unordered_map>
+#include <map>
 #include <vector>
 
 namespace torch_mlir_onnx {
@@ -28,7 +28,7 @@ private:
   using mapped_type = _Tp;
   using self = DictIterator<key_type, mapped_type>;
   using vector = std::vector<key_type>;
-  using key_value_map = std::unordered_map<key_type, mapped_type>;
+  using key_value_map = std::map<key_type, mapped_type>;
   using vector_iterator = typename vector::iterator;
 
   vector_iterator v_it_;
@@ -72,7 +72,7 @@ private:
   using mapped_type = _Tp;
   using self = DictConstIterator<key_type, mapped_type>;
   using vector = std::vector<key_type>;
-  using key_value_map = std::unordered_map<key_type, mapped_type>;
+  using key_value_map = std::map<key_type, mapped_type>;
   using vector_const_iterator = typename vector::const_iterator;
 
   vector_const_iterator v_it_;
@@ -114,14 +114,14 @@ public:
 template <typename _Key, typename _Tp> class Dict {
 
 private:
-  using key_value_map = std::unordered_map<_Key, _Tp>;
+  using key_value_map = std::map<_Key, _Tp>;
   using key_vector = std::vector<_Key>;
   using key_index_map =
-      std::unordered_map<_Key, typename key_vector::iterator::difference_type>;
+      std::map<_Key, typename key_vector::iterator::difference_type>;
 
-  key_value_map m_;
-  key_vector k_;
-  key_index_map i_;
+  mutable key_value_map m_;
+  mutable key_vector k_;
+  mutable key_index_map i_;
 
 public:
   /// Public typedefs.
@@ -145,8 +145,25 @@ public:
   Dict(const Dict &) = default;
   Dict(Dict &&) = default;
 
-  Dict &operator=(const Dict &) = default;
-  Dict &operator=(Dict &&) = default;
+  Dict &operator=(const Dict &rhs) {
+    if (this != &rhs) {
+      m_ = rhs.m_;
+      k_ = rhs.k_;
+      i_ = rhs.i_;
+    }
+
+    return *this;
+  }
+
+  Dict &operator=(Dict &&rhs) {
+    if (this != &rhs) {
+      m_ = std::move(rhs.m_);
+      k_ = std::move(rhs.k_);
+      i_ = std::move(rhs.i_);
+    }
+
+    return *this;
+  }
 
   ~Dict() = default;
 
@@ -194,6 +211,7 @@ public:
   std::pair<iterator, bool> emplace(_Args &&...args) {
     return insert(value_type(std::forward<_Args>(args)...));
   }
+
   reference operator[](const key_type &key) {
     auto ins = emplace(key, mapped_type());
     return (*ins.first).second;

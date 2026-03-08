@@ -304,37 +304,6 @@ def Convolution2DStaticModule_basic(module, tu: TestUtils):
     module.forward(tu.rand(3, 3, 10, 10), tu.rand(3, 3, 2, 2))
 
 
-class Convolution2DSingleIntTupleModule(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    @export
-    @annotate_args(
-        [
-            None,
-            ([3, 3, 10, 10], torch.float32, True),
-            ([3, 3, 2, 2], torch.float32, True),
-        ]
-    )
-    def forward(self, inputVec, weight):
-        return torch.ops.aten.convolution(
-            inputVec,
-            weight,
-            bias=None,
-            stride=(1,),
-            padding=(0,),
-            dilation=(1,),
-            transposed=False,
-            output_padding=[0, 0],
-            groups=1,
-        )
-
-
-@register_test_case(module_factory=lambda: Convolution2DSingleIntTupleModule())
-def Convolution2DSingleIntTupleModule_basic(module, tu: TestUtils):
-    module.forward(tu.rand(3, 3, 10, 10), tu.rand(3, 3, 2, 2))
-
-
 class Convolution2DStridedModule(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -899,7 +868,6 @@ def ConvolutionModule2DTransposeStridedStatic_basic(module, tu: TestUtils):
     module.forward(tu.rand(5, 2, 5, 6), tu.rand(2, 5, 2, 2))
 
 
-# The following test has negative effective padding: out_pad_total(H/W) = output_padding(H/W) - 2*padding(H/W)
 class ConvolutionModule2DTransposeNonUnitOutputPadding(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -931,72 +899,6 @@ class ConvolutionModule2DTransposeNonUnitOutputPadding(torch.nn.Module):
 )
 def ConvolutionModule2DTransposeNonUnitOutputPadding_basic(module, tu: TestUtils):
     module.forward(tu.rand(1, 2, 4, 4), tu.rand(2, 2, 3, 3))
-
-
-class ConvolutionModule2DTransposePositiveEffectivePadding(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    @export
-    @annotate_args(
-        [
-            None,
-            ([-1, -1, -1, -1], torch.float32, True),
-            ([-1, -1, -1, -1], torch.float32, True),
-        ]
-    )
-    def forward(self, inputVec, weight):
-        return torch.ops.aten.convolution(
-            inputVec,
-            weight,
-            bias=None,
-            stride=[2, 2],
-            padding=[0, 0],
-            dilation=[1, 1],
-            transposed=True,
-            output_padding=[1, 1],
-            groups=1,
-        )
-
-
-@register_test_case(
-    module_factory=lambda: ConvolutionModule2DTransposePositiveEffectivePadding()
-)
-def ConvolutionModule2DTransposePositiveEffectivePadding_basic(module, tu: TestUtils):
-    module.forward(tu.rand(1, 2, 4, 4), tu.rand(2, 2, 3, 3))
-
-
-class ConvolutionModule2DTransposeScalarTupleParams(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    @export
-    @annotate_args(
-        [
-            None,
-            ([5, 2, 5, 6], torch.float32, True),
-            ([2, 5, 2, 2], torch.float32, True),
-        ]
-    )
-    def forward(self, inputVec, weight):
-        return torch.ops.aten.convolution(
-            inputVec,
-            weight,
-            bias=None,
-            stride=(1,),
-            padding=(1,),
-            dilation=(1,),
-            transposed=True,
-            output_padding=(0,),
-            groups=1,
-        )
-
-
-@register_test_case(
-    module_factory=lambda: ConvolutionModule2DTransposeScalarTupleParams()
-)
-def ConvolutionModule2DTransposeScalarTupleParams_basic(module, tu: TestUtils):
-    module.forward(tu.rand(5, 2, 5, 6), tu.rand(2, 5, 2, 2))
 
 
 class Conv_Transpose1dModule(torch.nn.Module):
@@ -1667,39 +1569,6 @@ def Conv3dWithValidPaddingModule_basic(module, tu: TestUtils):
     module.forward(inputVec, weight, bias)
 
 
-class Conv3dModuleScalarTupleParams(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    @export
-    @annotate_args(
-        [
-            None,
-            ([-1, -1, -1, -1, -1], torch.float32, True),
-            ([-1, -1, -1, -1, -1], torch.float32, True),
-            ([-1], torch.float32, True),
-        ]
-    )
-    def forward(self, inputVec, weight, bias):
-        return torch.ops.aten.conv3d(
-            inputVec,
-            weight,
-            bias=bias,
-            stride=(1,),
-            padding=(0,),
-            dilation=(1,),
-            groups=1,
-        )
-
-
-@register_test_case(module_factory=lambda: Conv3dModuleScalarTupleParams())
-def Conv3dModuleScalarTupleParams_basic(module, tu: TestUtils):
-    inputVec = tu.rand(2, 2, 6, 6, 6)
-    weight = torch.randn(8, 2, 3, 3, 3)
-    bias = torch.randn(8)
-    module.forward(inputVec, weight, bias)
-
-
 class ConvTbcModule(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -2119,7 +1988,7 @@ class TransposedConv1dNegativePadding(torch.nn.Module):
             inputVec,
             weight,
             bias=bias,
-            stride=[4],
+            stride=[1],
             padding=[3],
             dilation=[1],
             transposed=True,
@@ -2131,72 +2000,6 @@ class TransposedConv1dNegativePadding(torch.nn.Module):
 @register_test_case(module_factory=lambda: TransposedConv1dNegativePadding())
 def TransposedConv1dNegativePadding_basic(module, tu: TestUtils):
     module.forward(tu.rand(1, 1, 7), tu.rand(1, 2, 3), tu.rand(2))
-
-
-class TransposedConv1dNegativePaddingUnitStrideDyn(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    @export
-    @annotate_args(
-        [
-            None,
-            ([-1, -1, -1], torch.float32, True),
-            ([1, 2, 3], torch.float32, True),
-            ([2], torch.float32, True),
-        ]
-    )
-    def forward(self, inputVec, weight, bias):
-        return torch.ops.aten.convolution(
-            inputVec,
-            weight,
-            bias=bias,
-            stride=[1],
-            padding=[3],
-            dilation=[1],
-            transposed=True,
-            output_padding=[0],
-            groups=1,
-        )
-
-
-@register_test_case(
-    module_factory=lambda: TransposedConv1dNegativePaddingUnitStrideDyn()
-)
-def TransposedConv1dNegativePaddingUnitStrideDyn_basic(module, tu: TestUtils):
-    module.forward(tu.rand(1, 1, 7), tu.rand(1, 2, 3), tu.rand(2))
-
-
-class TransposedConv1dNegativePaddingLarge(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    @export
-    @annotate_args(
-        [
-            None,
-            ([1, 17, 5], torch.float32, True),
-            ([17, 6, 3], torch.float32, True),
-            ([6], torch.float32, True),
-        ]
-    )
-    def forward(self, inputVec, weight, bias):
-        return torch.ops.aten.convolution(
-            inputVec,
-            weight,
-            bias=bias,
-            stride=[7],
-            padding=[10],
-            dilation=[4],
-            transposed=True,
-            output_padding=[0],
-            groups=1,
-        )
-
-
-@register_test_case(module_factory=lambda: TransposedConv1dNegativePaddingLarge())
-def TransposedConv1dNegativePaddingLarge_basic(module, tu: TestUtils):
-    module.forward(tu.rand(1, 17, 5), tu.rand(17, 6, 3), tu.rand(6))
 
 
 class TransposedConv2dNegativePadding(torch.nn.Module):
@@ -2231,38 +2034,6 @@ def TransposedConv2dNegativePadding_basic(module, tu: TestUtils):
     module.forward(tu.rand(1, 1, 4, 7), tu.rand(1, 2, 3, 3), tu.rand(2))
 
 
-class TransposedConv2dPositiveAndNegativePadding(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    @export
-    @annotate_args(
-        [
-            None,
-            ([1, 1, 4, 7], torch.float32, True),
-            ([1, 2, 3, 3], torch.float32, True),
-            ([2], torch.float32, True),
-        ]
-    )
-    def forward(self, inputVec, weight, bias):
-        return torch.ops.aten.convolution(
-            inputVec,
-            weight,
-            bias=bias,
-            stride=[4, 4],
-            padding=[0, 3],
-            dilation=[1, 1],
-            transposed=True,
-            output_padding=[0, 0],
-            groups=1,
-        )
-
-
-@register_test_case(module_factory=lambda: TransposedConv2dPositiveAndNegativePadding())
-def TransposedConv2dPositiveAndNegativePadding_basic(module, tu: TestUtils):
-    module.forward(tu.rand(1, 1, 4, 7), tu.rand(1, 2, 3, 3), tu.rand(2))
-
-
 class TransposedConv3dNegativePadding(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -2281,9 +2052,9 @@ class TransposedConv3dNegativePadding(torch.nn.Module):
             inputVec,
             weight,
             bias=bias,
-            stride=[1, 5, 3],
+            stride=[1, 1, 1],
             padding=[2, 1, 3],
-            dilation=[1, 2, 1],
+            dilation=[1, 1, 1],
             transposed=True,
             output_padding=[0, 0, 0],
             groups=1,

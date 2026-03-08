@@ -39,14 +39,12 @@ public:
                                 PatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
     MLIRContext *context = op->getContext();
-    // Only unroll loops if they are contained in a shape or dtype calculate
-    // regions.
+    // Only unroll loops if they are contained in a shape calculate region.
     Region *region = op->getParentRegion();
     Operation *parentOp = region->getParentOp();
-    if (!parentOp ||
-        !isa<Torch::ShapeCalculateOp, Torch::DtypeCalculateOp>(parentOp))
+    if (!parentOp || !isa<Torch::ShapeCalculateOp>(parentOp))
       return rewriter.notifyMatchFailure(
-          op, "Loop is not contained in a shape or dtype calculation regions.");
+          op, "Loop is not contained in a shape calculation region.");
     if (!op.isForLike())
       return rewriter.notifyMatchFailure(op, "Loop is not for-like");
     int64_t maxTripCount;
@@ -57,9 +55,8 @@ public:
     SmallVector<Value> indices;
     for (int64_t i = 0; i < maxTripCount; i++) {
       // TODO: Add convenience builder.
-      indices.push_back(ConstantIntOp::create(
-          rewriter, loc,
-          rewriter.getIntegerAttr(IntegerType::get(context, 64), i)));
+      indices.push_back(rewriter.create<ConstantIntOp>(
+          loc, rewriter.getIntegerAttr(IntegerType::get(context, 64), i)));
     }
     Block *beforeBlock = op->getBlock();
     Block *afterBlock = rewriter.splitBlock(op->getBlock(), op->getIterator());
@@ -214,33 +211,30 @@ public:
       return rewriter.notifyMatchFailure(op, "No new literal created");
 
     // Rewrite all users to use the appropriate list literals.
-    Value latestLiteral = PrimListConstructOp::create(
-        rewriter, op->getLoc(), op.getType(), op->getOperands());
+    Value latestLiteral = rewriter.create<PrimListConstructOp>(
+        op->getLoc(), op.getType(), op->getOperands());
     int nextLiteral = 0;
     for (Operation *user : usersToInterpret) {
       if (auto append = dyn_cast<AtenAppendTOp>(user)) {
         rewriter.setInsertionPoint(append);
-        latestLiteral = PrimListConstructOp::create(
-            rewriter, append->getLoc(), op.getType(),
-            listLiterals[nextLiteral++]);
+        latestLiteral = rewriter.create<PrimListConstructOp>(
+            append->getLoc(), op.getType(), listLiterals[nextLiteral++]);
         if (append.getSelf() == op)
           rewriter.eraseOp(append);
         continue;
       }
       if (auto insert = dyn_cast<AtenInsertTOp>(user)) {
         rewriter.setInsertionPoint(insert);
-        latestLiteral = PrimListConstructOp::create(
-            rewriter, insert->getLoc(), op.getType(),
-            listLiterals[nextLiteral++]);
+        latestLiteral = rewriter.create<PrimListConstructOp>(
+            insert->getLoc(), op.getType(), listLiterals[nextLiteral++]);
         if (insert.getSelf() == op)
           rewriter.eraseOp(insert);
         continue;
       }
       if (auto setItem = dyn_cast<Aten_SetItemTOp>(user)) {
         rewriter.setInsertionPoint(setItem);
-        latestLiteral = PrimListConstructOp::create(
-            rewriter, setItem->getLoc(), op.getType(),
-            listLiterals[nextLiteral++]);
+        latestLiteral = rewriter.create<PrimListConstructOp>(
+            setItem->getLoc(), op.getType(), listLiterals[nextLiteral++]);
         if (setItem.getL() == op)
           rewriter.eraseOp(setItem);
         continue;
@@ -301,11 +295,11 @@ LogicalResult Torch::updateCalculateOpResultTypes(Operation *calculateOp,
     if (!originalTypedValue) {
       rewriter.setInsertionPointAfter(calculateOp);
       if (isa<BaseTensorType>(originalResultType)) {
-        originalTypedValue = TensorStaticInfoCastOp::create(
-            rewriter, loc, originalResultType, result);
+        originalTypedValue = rewriter.create<TensorStaticInfoCastOp>(
+            loc, originalResultType, result);
       } else if (isa<Torch::NumberType>(originalResultType)) {
         originalTypedValue =
-            DerefineOp::create(rewriter, loc, originalResultType, result);
+            rewriter.create<DerefineOp>(loc, originalResultType, result);
       } else {
         return rewriter.notifyMatchFailure(
             calculateOp, "Unimplemented: Expected result type to "
@@ -332,10 +326,10 @@ LogicalResult Torch::updateCalculateOpResultTypes(Operation *calculateOp,
     rewriter.setInsertionPoint(yieldValues);
     if (isa<BaseTensorType>(updatedType)) {
       newYieldedValue =
-          TensorStaticInfoCastOp::create(rewriter, loc, updatedType, def);
+          rewriter.create<TensorStaticInfoCastOp>(loc, updatedType, def);
     } else {
       newYieldedValue =
-          PrimUncheckedCastOp::create(rewriter, loc, updatedType, def);
+          rewriter.create<PrimUncheckedCastOp>(loc, updatedType, def);
     }
   }
   use.set(newYieldedValue);

@@ -13,7 +13,6 @@ and Clang's
 ### All parts not covered by anyone else
 
 - Stella Laurenzo (@stellaraccident)
-- Zach Garvey (@zjgarvey)
 - Sean Silva (@silvasean) - emeritus
 
 --------------------------------------------------------------------------------
@@ -21,17 +20,14 @@ and Clang's
 ### `torch` dialect and other core IR pieces, Python bindings/API, JIT IR importer
 
 - Stella Laurenzo (@stellaraccident)
-- Zach Garvey (@zjgarvey)
 
 ### TorchToLinalg, Shape inference, Dtype refinement, MaximizeValueSemantics
 
-- Ramiro Leal-Cavazos (@ramiro050) - emeritus
-- Zach Garvey (@zjgarvey)
+- Ramiro Leal-Cavazos (@ramiro050)
 
-### CI / Build system / Packaging / [Release](https://github.com/llvm/torch-mlir-release)
+### CI / Build system / Packaging
 
 - Anush Elangovan (@powderluv)
-- Maybe you!*
 
 ### TorchToTOSA
 
@@ -49,24 +45,12 @@ and Clang's
 
 - Antonio Kim (@antoniojkim)
 - Ke Deng (@ke1337)
-- Maybe you!*
 
 ### Bazel build
 
 - Sambhav Jain (@sjain-stanford)
 - Ahmed Taei (@asaadaldien)
-- Maybe you!*
 
 ### LLVM Integrate
 
-- Zach Garvey (@zjgarvey) **
-- Ashay Rane (@ashay) **
-- Maybe you!*
-
-### Roll Pytorch
-
-- Zach Garvey (@zjgarvey) **
-
-
-*Please submit a pull request to add/remove your name as a code owner. Code owners should have a well-documented history and interest in maintaing the project.
-**This job is not the sole-responsibility of these people. If you are an active contributor, please help with updating core dependencies.
+- Ashay Rane (@ashay)

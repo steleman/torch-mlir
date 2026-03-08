@@ -1,20 +1,54 @@
-torch_mlir_enable_werror()
+include(LLVMConfig)
+include(MLIRConfig)
+include(TableGen)
+include(LLVMExports)
+include(MLIRTargets)
+include(AddLLVM)
+include(AddMLIR)
 
 add_subdirectory(CAPI)
 add_subdirectory(Conversion)
 add_subdirectory(Dialect)
 
 set(LinkedLibs
+  MLIRAffineDialect
+  MLIRArithDialect
+  MLIRBufferizationDialect
+  MLIRControlFlowDialect
   MLIRComplexDialect
   MLIRFuncDialect
   MLIRFuncInlinerExtension
   MLIRIR
+  MLIRCAPIIR
+  MLIRDLTIDialect
+  MLIRDLTITransformOps
+  MLIRGPUDialect
+  MLIRIndexDialect
+  MLIRIRDL
+  MLIRLinalgDialect
+  MLIRLLVMDialect
+  MLIRMathDialect
   MLIRMLProgramDialect
   MLIRMemRefDialect
   MLIRSCFDialect
+  MLIRQuantDialect
   MLIRTensorDialect
   MLIRTensorInferTypeOpInterfaceImpl
+  MLIRShapeDialect
+  MLIRSparseTensorDialect
+  MLIRTosaDialect
   MLIRSupport
+  MLIRUBDialect
+  MLIRVectorDialect
+  MLIROpenACCDialect
+  MLIROpenACCMPCommon
+  MLIROpenACCToLLVMIRTranslation
+  MLIROpenACCToSCF
+  MLIROpenACCTransforms
+  MLIROpenMPDialect
+  MLIROpenMPToLLVM
+  MLIROpenMPToLLVMIRTranslation
+  MLIROptLib
 
   # Dialects.
   TorchMLIRTMTensorDialect

@@ -29,6 +29,7 @@ add_mlir_library(TorchMLIRTorchPasses
 
   DEPENDS
   TorchMLIRTorchPassIncGen
+  TorchMLIRTorchUtils
 
   LINK_LIBS PUBLIC
   MLIRIR

@@ -1,6 +1,5 @@
 set(LinkedLibs
   MLIRFuncTransforms
-  MLIRControlFlowTransforms
   MLIRIR
   MLIRLinalgTransforms
   MLIRMemRefTransforms

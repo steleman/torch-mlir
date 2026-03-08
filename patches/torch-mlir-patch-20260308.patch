@@ -1,0 +1,1632 @@
+--- build_tools/cmake/TorchMLIRPyTorch.cmake	2025-10-31 17:50:59.215310472 -0400
++++ build_tools/cmake/TorchMLIRPyTorch.cmake	2025-10-31 20:56:15.569614542 -0400
+@@ -61,7 +61,7 @@
+     # Check dual ABI setting first
+     execute_process(
+       COMMAND ${Python3_EXECUTABLE}
+-      -c "import torch; import sys; sys.stdout.write('1' if torch.compiled_with_cxx11_abi() else '0')"
++      -c "import torch; import sys; sys.stdout.write('0' if torch.compiled_with_cxx11_abi() else '0')"
+       RESULT_VARIABLE _result
+       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+       OUTPUT_VARIABLE _use_cxx11_abi)
+@@ -87,9 +87,9 @@
+       message(STATUS "PyTorch C++ ABI version: \"${_cxx_abi_version}\"")
+       # Specialize compile flags for compiler
+       if(${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
+-        set(TORCH_CXXFLAGS "-D_GLIBCXX_USE_CXX11_ABI=${_use_cxx11_abi} -fabi-version=${_cxx_abi_version}")
++        set(TORCH_CXXFLAGS "${CMAKE_CXX_FLAGS}")
+       elseif(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
+-        set(TORCH_CXXFLAGS "-D_GLIBCXX_USE_CXX11_ABI=${_use_cxx11_abi} -U__GXX_ABI_VERSION -D__GXX_ABI_VERSION=10${_cxx_abi_version} '-DPYBIND11_COMPILER_TYPE=\"_gcc\"'")
++        set(TORCH_CXXFLAGS "${CMAKE_CXX_FLAGS} -DPYBIND11_COMPILER_TYPE=\"_gcc\"")
+       else()
+         message(WARNING "Unrecognized compiler. Cannot determine ABI flags.")
+         return()
+--- CMakeLists.txt	2025-10-31 17:50:59.213990693 -0400
++++ CMakeLists.txt	2025-12-02 11:49:27.906740993 -0500
+@@ -60,22 +60,25 @@
+   list(APPEND TORCH_MLIR_TABLEGEN_FLAGS "-DTORCH_MLIR_ENABLE_TOSA")
+ endif()
+ 
+-option(TORCH_MLIR_OUT_OF_TREE_BUILD "Specifies an out of tree build" OFF)
++option(TORCH_MLIR_OUT_OF_TREE_BUILD "Specifies an out of tree build" ON)
+ 
+ # PyTorch native extension gate. If OFF, then no features which depend on
+-# native extensions will be built.TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS is disabled by default.
+-# But it will be manually enabled in CI build to enable the jit_ir_importer.build_tools.torch_ods_gen
+-# and abstract_interp_lib_gen.py. Once pure python version of build_tools finished, no need to set it in CI.
++# native extensions will be built.TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS is disabled
++# by default.
++# But it will be manually enabled in CI build to enable the
++# jit_ir_importer.build_tools.torch_ods_gen and abstract_interp_lib_gen.py.
++# Once pure python version of build_tools finished, no need to set it in CI.
+ option(TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS "Enables PyTorch native extension features" OFF)
+ if(TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS)
+   add_definitions(-DTORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS)
+ endif()
++
+ # NOTE: The JIT_IR_IMPORTER paths have become unsupportable due to age and lack of maintainers.
+ # Turning this off disables the old TorchScript path, leaving FX based import as the current supported option.
+ # The option will be retained for a time, and if a maintainer is interested in setting up testing for it,
+ # please reach out on the list and speak up for it. It will only be enabled in CI for test usage.
+ cmake_dependent_option(TORCH_MLIR_ENABLE_JIT_IR_IMPORTER "Enables JIT IR Importer" ON TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS OFF)
+-cmake_dependent_option(TORCH_MLIR_ENABLE_LTC "Enables LTC backend" OFF TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS OFF)
++cmake_dependent_option(TORCH_MLIR_ENABLE_LTC "Enables LTC backend" OFF TORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS ON)
+ 
+ option(TORCH_MLIR_ENABLE_ONNX_C_IMPORTER "Enables the ONNX C importer" OFF)
+ 
+@@ -91,6 +94,27 @@
+   add_definitions(-D_USE_MATH_DEFINES)
+ endif()
+ 
++if (TORCH_MLIR_ENABLE_ONNX_C_IMPORTER)
++  if (NOT DEFINED ONNX_CMAKE_MODULE_PATH)
++    message(FATAL_ERROR "ONNX_CMAKE_MODULE_PATH is not defined.")
++  endif()
++
++  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${ONNX_CMAKE_MODULE_PATH}/")
++  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
++
++  find_package(Protobuf REQUIRED)
++  find_package(ONNX REQUIRED)
++
++  include(ONNXConfig)
++  add_definitions(-DONNX_NAMESPACE=onnx)
++  add_definitions(-DONNX_ML=1)
++  add_definitions(-DUSE_ML=1)
++
++  if (NOT ONNX_FOUND)
++    message(FATAL_ERROR "Could not find ONNX and ONNX_C_IMPORTER is enabled.")
++  endif()
++endif()
++
+ #-------------------------------------------------------------------------------
+ # Configure out-of-tree vs in-tree build
+ #-------------------------------------------------------------------------------
+@@ -103,14 +127,21 @@
+   # MLIR/LLVM Configuration
+   #-------------------------------------------------------------------------------
+ 
+-  find_package(MLIR REQUIRED CONFIG)
++  if (NOT DEFINED MLIR_DIR)
++    message(FATAL_ERROR "Out-of-tree build specified but MLIR_DIR is not set.")
++  endif()
++
++  if (NOT DEFINED LLVM_DIR)
++    message(FATAL_ERROR "Out-of-tree build specified but LLVM_DIR is not set.")
++  endif()
++
+   message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
+   message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
+ 
+   set(LLVM_RUNTIME_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/bin)
+-  set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/lib)
++  set(LLVM_LIBRARY_OUTPUT_INTDIR ${CMAKE_BINARY_DIR}/lib64)
+ 
+-  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
++  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib64)
+   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+ 
+   # Define the default arguments to use with 'lit', and an option for the user to
+@@ -121,12 +152,31 @@
+   endif()
+   set(LLVM_LIT_ARGS "${LIT_ARGS_DEFAULT}" CACHE STRING "Default options for lit")
+ 
++  if (NOT DEFINED MLIR_CMAKE_DIR)
++    message(FATAL_ERROR "MLIR_CMAKE_DIR is not set or was not detected.")
++  endif()
++
++  if (NOT DEFINED LLVM_CMAKE_DIR)
++    message(FATAL_ERROR "LLVM_CMAKE_DIR is not set or was not detected.")
++  endif()
++
++  message(STATUS "Using MLIR_CMAKE_DIR in: ${MLIR_CMAKE_DIR}")
++  message(STATUS "Using LLVM_CMAKE_DIR in: ${LLVM_CMAKE_DIR}")
++
+   list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
+   list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
++
++  include(LLVMConfig)
++  include(MLIRConfig)
++  include(LLVMExports)
++  include(MLIRTargets)
+   include(TableGen)
+   include(AddLLVM)
+   include(AddMLIR)
+   include(HandleLLVMOptions)
++  include(AddMLIRPython)
++
++  message(STATUS "Using LLVM Version ${LLVM_PACKAGE_VERSION}")
+ 
+   # Don't try to compile the python extensions at the moment. We need
+   # to import lots of dependencies from AddMLIRPython to make this work.
+@@ -134,6 +184,12 @@
+ 
+   set(TORCH-MLIR_BUILT_STANDALONE ON)
+   set(BACKEND_PACKAGE_STRING "LLVM ${LLVM_PACKAGE_VERSION}")
++
++  if (NOT DEFINED TORCH_INCLUDE_DIR)
++    message(FATAL_ERROR "PyTorch include directory is not defined.")
++  else()
++    include_directories(BEFORE ${TORCH_INCLUDE_DIR})
++  endif()
+ else()
+   message(STATUS "Torch-MLIR in-tree build.")
+   # In-tree build with LLVM_EXTERNAL_PROJECTS=torch-mlir
+--- cmake/Modules/FindONNX.cmake	2025-11-04 12:38:46.898373622 -0500
++++ cmake/Modules/FindONNX.cmake	2025-12-01 18:01:52.406699759 -0500
+@@ -0,0 +1,70 @@
++# Script to find the ONNX header files and libraries.
++# Defines the following:
++#   ONNX_FOUND       - if the package is found
++#   ONNX_INCLUDE_DIR - the directory for 'nvtx3'
++#   ONNX_LIBRARIES   - the libraries needed to linked for using ONNX
++#
++
++include(FindPackageHandleStandardArgs)
++unset(ONNX_FOUND)
++
++if (APPLE)
++find_path(ONNX_INCLUDE_DIR
++          NAMES
++          onnx_pb.h
++          HINTS
++          /usr/local/include/onnx)
++elseif (LINUX)
++find_path(ONNX_INCLUDE_DIR
++          NAMES
++          onnx_pb.h
++          HINTS
++          /usr/include/onnx
++          /usr/local/include/onnx)
++endif()
++
++if (NOT DEFINED ONNX_INCLUDE_DIR)
++  message(FATAL_ERROR "Could not find ONNX's header files directory.")
++endif()
++
++# set ONNX_FOUND
++find_package_handle_standard_args(ONNX DEFAULT_MSG ONNX_INCLUDE_DIR)
++
++if (APPLE)
++find_path(ONNX_LIBRARY_DIR
++          NAMES
++          libonnx.dylib
++          libonnx_proto.dylib
++          HINTS
++          /usr/local/lib)
++elseif (LINUX)
++find_path(ONNX_LIBRARY_DIR
++          NAMES
++          libonnx.so
++          libonnx_proto.so
++          HINTS
++          /usr/lib64
++          /usr/local/lib64)
++endif()
++
++if (NOT DEFINED ONNX_LIBRARY_DIR)
++  message(FATAL_ERROR "Could not find ONNX libraries directory.")
++endif()
++
++# set ONNX_FOUND
++find_package_handle_standard_args(ONNX DEFAULT_MSG ONNX_LIBRARY_DIR)
++
++# set external variables for usage in CMakeLists.txt
++if (ONNX_FOUND)
++  message(STATUS "Found ONNX.")
++  message(STATUS "ONNX_INCLUDE_DIR: ${ONNX_INCLUDE_DIR}")
++  message(STATUS "ONNX_LIBRARY_DIR: ${ONNX_LIBRARY_DIR}")
++  set(ONNX_FOUND True)
++  set(ONNX_INCLUDE_DIR ${ONNX_INCLUDE_DIR})
++  set(ONNX_LIBRARY_DIR ${ONNX_LIBRARY_DIR})
++  mark_as_advanced(ONNX_INCLUDE_DIR)
++  mark_as_advanced(ONNX_LIBRARY_DIR)
++else()
++  message(FATAL_ERROR "ONNX not found.")
++endif()
++
+diff: cmake/Modules/FindProtobuf.cmake: No such file or directory
+--- externals/stablehlo/stablehlo/integrations/python/CMakeLists.txt	2025-11-01 00:48:26.000000000 -0400
++++ externals/stablehlo/stablehlo/integrations/python/CMakeLists.txt	2025-11-13 19:56:15.000000000 -0500
+@@ -91,9 +91,11 @@
+ ################################################################################
+ 
+ ## The following options are used specifically for compiling nanobind codebase.
++if (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR ${CMAKE_CXX_COMPILER_ID} STREQUAL "AppleClang" OR ${CMAKE_CXX_COMPILER_ID} STREQUAL "ARMClang")
+ add_compile_options(-Wno-error=cast-qual -Wno-error=nested-anon-types
+   -Wno-error=extra-semi -Wno-error=zero-length-array
+   -Wno-error=covered-switch-default)
++endif()
+ 
+ declare_mlir_python_sources(CheckPythonExtensions)
+ declare_mlir_python_extension(CheckPythonExtensions.Main
+--- externals/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp	2025-11-01 00:48:27.000000000 -0400
++++ externals/stablehlo/stablehlo/transforms/optimization/StablehloAggressiveFolder.cpp	2025-11-02 13:55:20.000000000 -0500
+@@ -85,35 +85,34 @@
+ LogicalResult validateStaticShapeResult(PatternRewriter& rewriter,
+                                         Operation* op, ShapedType resultType) {
+   if (!resultType.hasStaticShape())
+-    return rewriter.notifyMatchFailure(
+-        op, "unable to fold dynamically shaped result type to constant");
++    return rewriter.notifyMatchFailure(op,
++                    "unable to fold dynamically shaped result type to constant");
+   return success();
+ }
+ 
+ /// Unary constant folder that uses a generic folder function to handle both
+ /// ints and floats.
+-template <typename Fn, typename IntResultType = IntegerAttr,
+-          typename FloatResultType = FloatAttr>
++template <typename Fn>
+ TypedAttr foldUnaryOpIntOrFloat(Type resultType, TypedAttr operand,
+                                 Fn&& folder) {
+   Type elemTy = getElementTypeOrSelf(operand);
+ 
+   Attribute res;
+   if (isa<IntegerType>(elemTy))
+-    res = constFoldUnaryOp<IntegerAttr, IntegerAttr::ValueType, void,
+-                           IntResultType>(operand, folder);
+-  if (isa<FloatType>(elemTy))
+-    res = constFoldUnaryOp<FloatAttr, FloatAttr::ValueType, void,
+-                           FloatResultType>(operand, folder);
+-  if (res) return cast<TypedAttr>(res);
+-
++    res = constFoldUnaryOp<IntegerAttr, IntegerAttr::ValueType, void>(
++                           operand, std::forward<Fn>(folder));
++  else if (isa<FloatType>(elemTy))
++    res = constFoldUnaryOp<FloatAttr, FloatAttr::ValueType, void>(
++                           operand, std::forward<Fn>(folder));
++  if (!res)
+   return nullptr;
++
++  return cast<TypedAttr>(res);
+ }
+ 
+ /// Unary constant folder that uses a generic folder function to handle both
+ /// ints and floats.
+-template <typename Fn, typename IntResultType = IntegerAttr,
+-          typename FloatResultType = FloatAttr>
++template <typename Fn>
+ FailureOr<TypedAttr> foldUnaryOpIntOrFloat(PatternRewriter& rewriter,
+                                            Operation* op, Fn&& folder) {
+   if (op->getNumOperands() != 1 || op->getNumResults() != 1)
+@@ -122,24 +121,31 @@
+   TypedAttr attr;
+   matchPattern(op->getOperand(0), m_Constant(&attr));
+ 
+-  if (!attr) return rewriter.notifyMatchFailure(op, "operand not constants");
++  if (!attr)
++    return rewriter.notifyMatchFailure(op, "operand not constants");
+ 
+-  TypedAttr res = foldUnaryOpIntOrFloat<Fn, IntResultType, FloatResultType>(
+-      op->getResultTypes()[0], attr, std::forward<Fn>(folder));
+-  if (!res) return rewriter.notifyMatchFailure(op, "folding failed");
++  TypedAttr res = foldUnaryOpIntOrFloat(op->getResultTypes()[0], attr,
++                                        std::forward<Fn>(folder));
++  if (!res)
++    return rewriter.notifyMatchFailure(op, "folding failed");
+ 
+   return res;
+ }
+ 
+ /// Binary constant folder that uses a generic folder function to handle both
+ /// ints and floats.
+-template <typename Fn, typename IntResultType = IntegerAttr,
+-          typename FloatResultType = FloatAttr>
++template <typename Fn, typename IntResultType, typename FloatResultType>
+ TypedAttr foldBinaryOpIntOrFloat(Type resultType, TypedAttr lhs, TypedAttr rhs,
+                                  Fn&& folder) {
+   Attribute operands[2] = {lhs, rhs};
+   Type elemTy = getElementTypeOrSelf(lhs);
+ 
++  Type lhsType = getElementTypeOrSelf(lhs);
++  Type rhsType = getElementTypeOrSelf(rhs);
++
++  if (lhsType != rhsType)
++    return nullptr;
++
+   Attribute res;
+   if (isa<IntegerType>(elemTy))
+     res = constFoldBinaryOp<IntegerAttr, IntegerAttr::ValueType, void,
+@@ -147,15 +153,247 @@
+   if (isa<FloatType>(elemTy))
+     res = constFoldBinaryOp<FloatAttr, FloatAttr::ValueType, void,
+                             FloatResultType>(operands, resultType, folder);
+-  if (res) return cast<TypedAttr>(res);
++  if (!res)
++    return nullptr;
++
++  return cast<TypedAttr>(res);
++}
++
++/// Binary constant folder that handles ints
++template <typename Fn, typename IntResultType>
++FailureOr<TypedAttr> foldBinaryOpInt(PatternRewriter& rewriter,
++                                     IntResultType resultType,
++                                     Operation* op, Fn&& folder) {
++  TypedAttr lhsAttr, rhsAttr;
++  matchPattern(op->getOperand(0), m_Constant(&lhsAttr));
++  matchPattern(op->getOperand(1), m_Constant(&rhsAttr));
++
++  if (!lhsAttr || !rhsAttr)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not constants");
++
++  Type lhsType = getElementTypeOrSelf(lhsAttr);
++  Type rhsType = getElementTypeOrSelf(rhsAttr);
++
++  if (lhsType != rhsType)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operand types are not the same");
++
++  Attribute operands[2] = { lhsAttr, rhsAttr };
++  Attribute res;
++
++  res = constFoldBinaryOp<IntegerAttr, IntegerAttr::ValueType, void>(
++                          operands, resultType, std::forward<Fn>(folder));
++  return res ? cast<TypedAttr>(res) : nullptr;
++}
++
++/// Binary constant folder that handles floats
++template <typename Fn, typename FloatResultType>
++FailureOr<TypedAttr> foldBinaryOpFloat(PatternRewriter& rewriter,
++                                       FloatResultType resultType,
++                                       Operation* op, Fn&& folder) {
++  TypedAttr lhsAttr, rhsAttr;
++  matchPattern(op->getOperand(0), m_Constant(&lhsAttr));
++  matchPattern(op->getOperand(1), m_Constant(&rhsAttr));
++
++  if (!lhsAttr || !rhsAttr)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not constants");
++
++  Type lhsType = getElementTypeOrSelf(lhsAttr);
++  Type rhsType = getElementTypeOrSelf(rhsAttr);
++
++  if (lhsType != rhsType)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operand types are not the same");
++
++  Attribute operands[2] = { lhsAttr, rhsAttr };
++  Attribute res;
++
++  res = constFoldBinaryOp<IntegerAttr, IntegerAttr::ValueType, void>(
++                          operands, resultType, std::forward<Fn>(folder));
++  return res ? cast<TypedAttr>(res) : nullptr;
++}
++
++/// Binary constant folder that uses a generic folder function to handle both
++/// ints and floats.
++template <typename Fn, typename IntResultType,
++          typename FloatResultType>
++FailureOr<TypedAttr> foldBinaryOpIntOrFloat(PatternRewriter& rewriter,
++                                            IntResultType resultType,
++                                            Operation* op, Fn&& folder) {
++  if (op->getNumOperands() != 2 || op->getNumResults() != 1)
++    return rewriter.notifyMatchFailure(op, "expected binary op");
++
++  TypedAttr lhsAttr, rhsAttr;
++  matchPattern(op->getOperand(0), m_Constant(&lhsAttr));
++  matchPattern(op->getOperand(1), m_Constant(&rhsAttr));
++
++  if (!lhsAttr || !rhsAttr)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not constants");
++
++  Type lhsType = getElementTypeOrSelf(lhsAttr);
++  Type rhsType = getElementTypeOrSelf(rhsAttr);
++
++  if (lhsType != rhsType)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operand types are not the same");
++
++  TypedAttr res =
++    foldBinaryOpIntOrFloat<Fn, IntResultType, FloatResultType>(
++      resultType, lhsAttr, rhsAttr, std::forward<Fn>(folder));
++  if (!res)
++    return rewriter.notifyMatchFailure(op, "folding failed");
++
++  return res;
++}
++
++/// Binary constant folder that uses a generic folder function to handle both
++/// ints and floats.
++template <typename Fn, typename ResultType>
++FailureOr<TypedAttr> foldBinaryOpIntOrFloat(PatternRewriter& rewriter,
++                                            ResultType resultType,
++                                            Operation* op, Fn&& folder) {
++  if (op->getNumOperands() != 2 || op->getNumResults() != 1)
++    return rewriter.notifyMatchFailure(op, "expected binary op");
++
++  TypedAttr lhsAttr, rhsAttr;
++  matchPattern(op->getOperand(0), m_Constant(&lhsAttr));
++  matchPattern(op->getOperand(1), m_Constant(&rhsAttr));
++
++  if (!lhsAttr || !rhsAttr)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not constants");
++
++  Type lhsType = getElementTypeOrSelf(lhsAttr);
++  Type rhsType = getElementTypeOrSelf(rhsAttr);
++
++  if (lhsType != rhsType)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operand types are not the same");
++
++  if (isa<IntegerType>(lhsType) && isa<IntegerType>(rhsType))
++    return foldBinaryOpInt(rewriter, resultType, op, std::forward<Fn>(folder));
++  else if (isa<FloatType>(lhsType) && isa<FloatType>(rhsType))
++    return foldBinaryOpFloat(rewriter, resultType, op, std::forward<Fn>(folder));
++
++  return failure();
++}
++
++/// Binary constant folder that uses a generic folder function to handle both
++/// ints and floats.
++template <typename Fn>
++TypedAttr
++foldBinaryOpIntOrFloat(Type resultType, TypedAttr lhs, TypedAttr rhs,
++                       Fn&& folder) {
++  Attribute operands[2] = { lhs, rhs };
++  Type elemTy = getElementTypeOrSelf(lhs);
++
++  Type lhsType = getElementTypeOrSelf(lhs);
++  Type rhsType = getElementTypeOrSelf(rhs);
+ 
++  if (lhsType != rhsType)
+   return nullptr;
++
++  Attribute res;
++  if (isa<IntegerType>(elemTy))
++    res = constFoldBinaryOp<IntegerAttr, IntegerAttr::ValueType, void>(
++                            operands, resultType, std::forward<Fn>(folder));
++  else if (isa<FloatType>(elemTy))
++    res = constFoldBinaryOp<FloatAttr, FloatAttr::ValueType, void>(
++                            operands, resultType, std::forward<Fn>(folder));
++
++  return res ? cast<TypedAttr>(res) : nullptr;
++}
++
++/// Binary constant folder that uses a generic folder function to handle both
++/// ints and floats.
++template <typename Fn>
++std::optional<TypedAttr>
++foldBinaryOpIntOrFloat(Type resultType, const std::optional<TypedAttr>& lhs,
++                       TypedAttr rhs, Fn&& folder) {
++  Attribute operands[2] = { lhs.value(), rhs };
++  Type elemTy = getElementTypeOrSelf(lhs.value());
++
++  Type lhsType = getElementTypeOrSelf(lhs.value());
++  Type rhsType = getElementTypeOrSelf(rhs);
++
++  if (lhsType != rhsType)
++    return std::nullopt;
++
++  if (isa<IntegerType>(elemTy)) {
++    auto res = constFoldBinaryOp<IntegerAttr, IntegerAttr::ValueType, void>(
++                            operands, resultType, std::forward<Fn>(folder));
++    return res ? cast<TypedAttr>(res) : std::nullopt;
++  } else if (isa<FloatType>(elemTy)) {
++    auto res = constFoldBinaryOp<FloatAttr, FloatAttr::ValueType, void>(
++                            operands, resultType, std::forward<Fn>(folder));
++    return res ? cast<TypedAttr>(res) : std::nullopt;
++  }
++
++  return std::nullopt;
+ }
+ 
+ /// Binary constant folder that uses a generic folder function to handle both
+ /// ints and floats.
+-template <typename Fn, typename IntResultType = IntegerAttr,
+-          typename FloatResultType = FloatAttr>
++template <typename Fn>
++std::optional<TypedAttr>
++foldBinaryOpIntOrFloat(Type resultType, TypedAttr lhs,
++                       const std::optional<TypedAttr>& rhs, Fn&& folder) {
++  Attribute operands[2] = { lhs, rhs.value() };
++  Type elemTy = getElementTypeOrSelf(lhs);
++
++  Type lhsType = getElementTypeOrSelf(lhs);
++  Type rhsType = getElementTypeOrSelf(rhs.value());
++
++  if (lhsType != rhsType)
++    return nullptr;
++
++  if (isa<IntegerType>(elemTy)) {
++    auto res = constFoldBinaryOp<IntegerAttr, IntegerAttr::ValueType, void>(
++                            operands, resultType, std::forward<Fn>(folder));
++    return res ? cast<TypedAttr>(res) : nullptr;
++  } else if (isa<FloatType>(elemTy)) {
++    auto res = constFoldBinaryOp<FloatAttr, FloatAttr::ValueType, void>(
++                            operands, resultType, std::forward<Fn>(folder));
++    return res ? cast<TypedAttr>(res) : nullptr;
++  }
++
++  return nullptr;
++}
++
++/// Binary constant folder that uses a generic folder function to handle both
++/// ints and floats.
++template <typename Fn>
++std::optional<TypedAttr>
++foldBinaryOpIntOrFloat(Type resultType, const std::optional<TypedAttr>& lhs,
++                       const std::optional<TypedAttr>& rhs, Fn&& folder) {
++  Attribute operands[2] = { lhs.value(), rhs.value() };
++  Type elemTy = getElementTypeOrSelf(lhs.value());
++
++  Type lhsType = getElementTypeOrSelf(lhs.value());
++  Type rhsType = getElementTypeOrSelf(rhs.value());
++
++  if (lhsType != rhsType)
++    return std::nullopt;
++
++  if (isa<IntegerType>(elemTy)) {
++    auto res = constFoldBinaryOp<IntegerAttr, IntegerAttr::ValueType, void>(
++                            operands, resultType, std::forward<Fn>(folder));
++    return res ? cast<TypedAttr>(res) : std::nullopt;
++  } else if (isa<FloatType>(elemTy)) {
++    auto res = constFoldBinaryOp<FloatAttr, FloatAttr::ValueType, void>(
++                            operands, resultType, std::forward<Fn>(folder));
++    return res ? cast<TypedAttr>(res) : std::nullopt;
++  }
++
++  return std::nullopt;
++}
++
++/// Binary constant folder that uses a generic folder function to handle both
++/// ints and floats.
++template <typename Fn>
+ FailureOr<TypedAttr> foldBinaryOpIntOrFloat(PatternRewriter& rewriter,
+                                             Operation* op, Fn&& folder) {
+   if (op->getNumOperands() != 2 || op->getNumResults() != 1)
+@@ -166,11 +404,53 @@
+   matchPattern(op->getOperand(1), m_Constant(&rhsAttr));
+ 
+   if (!lhsAttr || !rhsAttr)
+-    return rewriter.notifyMatchFailure(op, "lhs & rhs operands not constants");
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not constants");
++
++  Type lhsType = getElementTypeOrSelf(lhsAttr);
++  Type rhsType = getElementTypeOrSelf(rhsAttr);
+ 
+-  TypedAttr res = foldBinaryOpIntOrFloat<Fn, IntResultType, FloatResultType>(
+-      op->getResultTypes()[0], lhsAttr, rhsAttr, std::forward<Fn>(folder));
+-  if (!res) return rewriter.notifyMatchFailure(op, "folding failed");
++  if (lhsType != rhsType)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not of the same type");
++
++  auto res = foldBinaryOpIntOrFloat(op->getResultTypes()[0], lhsAttr, rhsAttr,
++                                    folder);
++                                    // std::forward<Fn>(folder));
++  if (!res)
++    return rewriter.notifyMatchFailure(op, "folding failed");
++
++  return res;
++}
++
++/// Binary constant folder that uses a generic folder function to handle both
++/// ints and floats.
++template <typename Fn, typename ResultType>
++FailureOr<TypedAttr> foldBinaryOpIntOrFloat(PatternRewriter& rewriter,
++                                            Operation* op,
++                                            ResultType resultType,
++                                            Fn&& folder) {
++  if (op->getNumOperands() != 2 || op->getNumResults() != 1)
++    return rewriter.notifyMatchFailure(op, "expected binary op");
++
++  TypedAttr lhsAttr, rhsAttr;
++  matchPattern(op->getOperand(0), m_Constant(&lhsAttr));
++  matchPattern(op->getOperand(1), m_Constant(&rhsAttr));
++
++  if (!lhsAttr || !rhsAttr)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not constants");
++
++  Type lhsType = getElementTypeOrSelf(lhsAttr);
++  Type rhsType = getElementTypeOrSelf(rhsAttr);
++
++  if (lhsType != rhsType)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not of the same type");
++
++  auto res = foldBinaryOpIntOrFloat(resultType, lhsAttr, rhsAttr, folder);
++  if (!res)
++    return rewriter.notifyMatchFailure(op, "folding failed");
+ 
+   return res;
+ }
+@@ -183,7 +463,7 @@
+   auto result = constFoldCastOp<AttrElementT, TargetAttrElementT,
+                                 typename AttrElementT::ValueType,
+                                 typename TargetAttrElementT::ValueType, void>(
+-      elements, resType, calculate);
++      elements, resType, std::forward<CalculationT>(calculate));
+ 
+   if (!result) {
+     return rewriter.notifyMatchFailure(op, [&](Diagnostic& diag) {
+@@ -304,6 +584,7 @@
+       if (hasAnyDeclaredSideEffects(&nestedOp)) return true;
+     }
+   }
++
+   return false;
+ }
+ 
+@@ -322,20 +603,18 @@
+                        PatternBenefit benefit = 1,
+                        ArrayRef<StringRef> generatedNames = {}) = delete;
+ 
+-  const StablehloAggressiveFolderPassOptions& options;
+-
+   LogicalResult validateElementCountForFold(PatternRewriter& rewriter,
+                                             Operation* op,
+                                             ShapedType resultType) const {
+     size_t numElems = resultType.getNumElements();
+     if (numElems > static_cast<size_t>(options.foldOpElementLimit))
+-      return rewriter.notifyMatchFailure(
+-          op,
+-          "too many elements, fold "
+-          "limit is " +
++      return rewriter.notifyMatchFailure(op,
++                      "too many elements, fold limit is " +
+               std::to_string(options.foldOpElementLimit));
+     return success();
+   }
++
++  const StablehloAggressiveFolderPassOptions& options;
+ };
+ 
+ namespace fold_unary {
+@@ -458,8 +737,8 @@
+     std::optional<APInt> FoldAsIntType(APInt operand) const {
+       const size_t bitWidth = operand.getBitWidth();
+ 
+-      auto convertResult = [&](std::optional<ComputationDataType> result)
+-          -> std::optional<APInt> {
++      auto convertResult =
++        [&](std::optional<ComputationDataType> result) -> std::optional<APInt> {
+         if (result == std::nullopt) return std::nullopt;
+         return APInt(bitWidth, *result, isSignedInt);
+       };
+@@ -515,7 +794,9 @@
+     } else {
+       return failure();
+     }
+-    if (failed(result)) return failure();
++
++    if (failed(result))
++      return failure();
+ 
+     rewriter.replaceOpWithNewOp<ConstantOp>(op, result.value());
+     return success();
+@@ -628,17 +909,33 @@
+     if (failed(validateShapeFoldDtype(rewriter, op, resultType)))
+       return failure();
+ 
+-    auto res = foldBinaryOpIntOrFloat<FoldCompare, IntegerAttr, IntegerAttr>(
+-        rewriter, op,
+-        FoldCompare(op.getComparisonDirection(), op.getCompareType()));
+-    if (failed(res)) return failure();
++  TypedAttr lhsAttr, rhsAttr;
++  matchPattern(op->getOperand(0), m_Constant(&lhsAttr));
++  matchPattern(op->getOperand(1), m_Constant(&rhsAttr));
++
++  if (!lhsAttr || !rhsAttr)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not constants");
++
++  Type lhsType = getElementTypeOrSelf(lhsAttr);
++  Type rhsType = getElementTypeOrSelf(rhsAttr);
++
++  if (lhsType != rhsType)
++    return rewriter.notifyMatchFailure(op,
++                    "lhs and rhs operands are not of the same type");
++
++  auto res = foldBinaryOpIntOrFloat(rewriter, resultType, op,
++                                    FoldCompare(op.getComparisonDirection(),
++                                                op.getCompareType()));
++    if (failed(res))
++      return failure();
++
+     rewriter.replaceOpWithNewOp<mlir::stablehlo::ConstantOp>(op, res.value());
+     return success();
+   }
+ 
+   struct FoldCompare {
+-    FoldCompare(ComparisonDirection direction,
+-                std::optional<ComparisonType> kind)
++    FoldCompare(ComparisonDirection direction, std::optional<ComparisonType> kind)
+         : direction(direction), kind(kind) {}
+     ComparisonDirection direction;
+     std::optional<ComparisonType> kind;
+--- include/torch-mlir/Conversion/CMakeLists.txt	2025-10-31 17:50:59.226893617 -0400
++++ include/torch-mlir/Conversion/CMakeLists.txt	2025-10-31 20:56:15.568714429 -0400
+@@ -2,8 +2,6 @@
+ 
+ set(LLVM_TARGET_DEFINITIONS Passes.td)
+ 
+-
+-
+ mlir_tablegen(Passes.h.inc -gen-pass-decls ${TORCH_MLIR_TABLEGEN_FLAGS})
+ 
+ add_public_tablegen_target(TorchMLIRConversionPassIncGen)
+--- include/torch-mlir/Conversion/TorchOnnxToTorch/CMakeLists.txt	2025-10-31 17:50:59.226921842 -0400
++++ include/torch-mlir/Conversion/TorchOnnxToTorch/CMakeLists.txt	2025-10-31 20:56:15.568522179 -0400
+@@ -1,4 +1,8 @@
+ set(LLVM_TARGET_DEFINITIONS Passes.td)
+ mlir_tablegen(Passes.h.inc -gen-pass-decls)
+ add_public_tablegen_target(TorchMLIRConversionTorchOnnxToTorchPassIncGen)
++
++if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
+ add_mlir_doc(Passes TorchMLIRConversionTorchOnnxToTorchPasses ./ -gen-pass-doc)
++endif()
++
+--- include/torch-mlir-dialects/Dialect/TMTensor/IR/CMakeLists.txt	2025-10-31 17:50:59.226409800 -0400
++++ include/torch-mlir-dialects/Dialect/TMTensor/IR/CMakeLists.txt	2025-10-31 20:56:15.568296617 -0400
+@@ -25,7 +25,10 @@
+   mlir_tablegen(TMTensorDialect.h.inc -gen-dialect-decls -dialect=tm_tensor)
+   mlir_tablegen(TMTensorDialect.cpp.inc -gen-dialect-defs -dialect=tm_tensor)
+   add_public_tablegen_target(TorchMLIRTMTensorOpsIncGen)
++
++  if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
+   add_dependencies(mlir-headers TorchMLIRTMTensorOpsIncGen)
++  endif()
+ endfunction()
+ 
+ _add_dialect()
+--- include/torch-mlir/Dialect/TorchConversion/IR/CMakeLists.txt	2025-10-31 17:50:59.229173471 -0400
++++ include/torch-mlir/Dialect/TorchConversion/IR/CMakeLists.txt	2025-10-31 20:56:15.569376017 -0400
+@@ -1,10 +1,28 @@
+ set(LLVM_TARGET_DEFINITIONS TorchConversionOps.td)
+ mlir_tablegen(TorchConversionOps.h.inc -gen-op-decls)
+ mlir_tablegen(TorchConversionOps.cpp.inc -gen-op-defs)
+-mlir_tablegen(TorchConversionDialect.h.inc -gen-dialect-decls -dialect=torch_c)
+-mlir_tablegen(TorchConversionDialect.cpp.inc -gen-dialect-defs -dialect=torch_c)
++# mlir_tablegen(TorchConversionOps.h.inc -gen-dialect-decls -dialect=torch)
++# mlir_tablegen(TorchConversionOps.cpp.inc -gen-dialect-defs -dialect=torch)
+ add_public_tablegen_target(MLIRTorchConversionOpsIncGen)
++
++# set(LLVM_TARGET_DEFINITIONS TorchConversionBase.td)
++# mlir_tablegen(TorchConversionBase.h.inc -gen-op-decls)
++# mlir_tablegen(TorchConversionBase.cpp.inc -gen-op-defs)
++# mlir_tablegen(TorchConversionBase.h.inc -gen-dialect-decls -dialect=torch)
++# mlir_tablegen(TorchConversionBase.cpp.inc -gen-dialect-defs -dialect=torch)
++# add_public_tablegen_target(MLIRTorchConversionBaseIncGen)
++
++set(LLVM_TARGET_DEFINITIONS TorchConversionDialect.td)
++# mlir_tablegen(TorchConversionDialect.h.inc -gen-op-decls)
++# mlir_tablegen(TorchConversionDialect.cpp.inc -gen-op-defs)
++mlir_tablegen(TorchConversionDialect.h.inc -gen-dialect-decls -dialect=torch_conversion)
++mlir_tablegen(TorchConversionDialect.cpp.inc -gen-dialect-defs -dialect=torch_conversion)
++add_public_tablegen_target(MLIRTorchConversionDialectIncGen)
++
+ add_dependencies(mlir-headers MLIRTorchConversionOpsIncGen)
++# add_dependencies(mlir-headers MLIRTorchConversionBaseIncGen)
++add_dependencies(mlir-headers MLIRTorchConversionDialectIncGen)
+ 
+ add_mlir_doc(TorchConversionDialect TorchConversionDialect TorchConversion/ -gen-dialect-doc)
+ add_mlir_doc(TorchConversionOps TorchConversionOps TorchConversion/ -gen-op-doc)
++
+--- include/torch-mlir/Dialect/TorchConversion/IR/TorchConversionBase.td	2025-10-31 17:50:59.229194476 -0400
++++ include/torch-mlir/Dialect/TorchConversion/IR/TorchConversionBase.td	2025-10-31 20:56:27.821872746 -0400
+@@ -13,8 +13,7 @@
+ include "mlir/IR/OpBase.td"
+ 
+ def TorchConversion_Dialect : Dialect {
+-  // `torch_conversion` is too verbose.
+-  let name = "torch_c";
++  let name = "torch_conversion";
+   let cppNamespace = "::mlir::torch::TorchConversion";
+   let description = [{
+     This dialect contains ops and transforms for converting from the Torch
+--- include/torch-mlir/Dialect/TorchConversion/IR/TorchConversionDialect.td	2025-10-31 17:50:59.229194476 -0400
++++ include/torch-mlir/Dialect/TorchConversion/IR/TorchConversionDialect.td	2025-10-31 20:56:27.821872746 -0400
+@@ -0,0 +1,37 @@
++//===-------------------------------------------------------*- tablegen -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++// Also available under a BSD-style license. See LICENSE.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef TORCHCONVERSION_DIALECT
++#define TORCHCONVERSION_DIALECT
++
++include "mlir/IR/OpAsmInterface.td"
++include "mlir/IR/SymbolInterfaces.td"
++include "mlir/Interfaces/InferTypeOpInterface.td"
++include "mlir/Interfaces/SideEffectInterfaces.td"
++include "torch-mlir/Dialect/Torch/IR/TorchTypes.td"
++include "mlir/IR/OpBase.td"
++
++def TorchConversion_Dialect : Dialect {
++  let name = "torch_conversion";
++  let cppNamespace = "::mlir::torch::TorchConversion";
++  let description = [{
++    This dialect contains ops and transforms for converting from the Torch
++    backend contract to the linalg-on-tensors backend contract.
++
++    This mainly consists of converting ops and types from `torch` dialect
++    to the mix of dialects of the linalg-on-tensors backend contract, such as
++    tensor ops being converted linalg-on-tensors and `!torch.vtensor` being
++    converted to the builtin `tensor` type.
++  }];
++
++  let hasConstantMaterializer = 1;
++}
++
++#endif // TORCHCONVERSION_DIALECT
++
+--- include/torch-mlir/Dialect/Torch/IR/CMakeLists.txt	2025-10-31 17:50:59.227883186 -0400
++++ include/torch-mlir/Dialect/Torch/IR/CMakeLists.txt	2025-10-31 20:56:15.569129314 -0400
+@@ -4,12 +4,19 @@
+ mlir_tablegen(TorchDialect.h.inc -gen-dialect-decls -dialect=torch)
+ mlir_tablegen(TorchDialect.cpp.inc -gen-dialect-defs -dialect=torch)
+ add_public_tablegen_target(MLIRTorchOpsIncGen)
++
++
++if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
+ add_dependencies(mlir-headers MLIRTorchOpsIncGen)
++endif()
+ 
+ set(LLVM_TARGET_DEFINITIONS TorchTypes.td)
+ mlir_tablegen(TorchTypes.h.inc -gen-typedef-decls)
+ mlir_tablegen(TorchTypes.cpp.inc -gen-typedef-defs)
+ add_public_tablegen_target(MLIRTorchTypesIncGen)
+ 
++if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
+ add_mlir_doc(TorchDialect TorchDialect Torch/ -gen-dialect-doc)
+ add_mlir_doc(TorchOps TorchOps Torch/ -gen-op-doc)
++endif()
++
+--- include/torch-mlir/Dialect/Torch/Transforms/CMakeLists.txt	2025-10-31 17:50:59.227883186 -0400
++++ include/torch-mlir/Dialect/Torch/Transforms/CMakeLists.txt	2025-10-31 20:56:15.568922768 -0400
+@@ -4,4 +4,7 @@
+ mlir_tablegen(Transforms.capi.cpp.inc -gen-pass-capi-impl)
+ add_public_tablegen_target(TorchMLIRTorchPassIncGen)
+ 
++if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
+ add_mlir_doc(Passes TorchMLIRTorchTransforms ./ -gen-pass-doc)
++endif()
++
+--- lib/CMakeLists.txt	2025-10-31 17:50:59.229592846 -0400
++++ lib/CMakeLists.txt	2025-12-04 21:47:39.841168918 -0500
+@@ -1,20 +1,54 @@
+-torch_mlir_enable_werror()
++include(LLVMConfig)
++include(MLIRConfig)
++include(TableGen)
++include(LLVMExports)
++include(MLIRTargets)
++include(AddLLVM)
++include(AddMLIR)
+ 
+ add_subdirectory(CAPI)
+ add_subdirectory(Conversion)
+ add_subdirectory(Dialect)
+ 
+ set(LinkedLibs
++  MLIRAffineDialect
++  MLIRArithDialect
++  MLIRBufferizationDialect
++  MLIRControlFlowDialect
+   MLIRComplexDialect
+   MLIRFuncDialect
+   MLIRFuncInlinerExtension
+   MLIRIR
++  MLIRCAPIIR
++  MLIRDLTIDialect
++  MLIRDLTITransformOps
++  MLIRGPUDialect
++  MLIRIndexDialect
++  MLIRIRDL
++  MLIRLinalgDialect
++  MLIRLLVMDialect
++  MLIRMathDialect
+   MLIRMLProgramDialect
+   MLIRMemRefDialect
+   MLIRSCFDialect
++  MLIRQuantDialect
+   MLIRTensorDialect
+   MLIRTensorInferTypeOpInterfaceImpl
++  MLIRShapeDialect
++  MLIRSparseTensorDialect
++  MLIRTosaDialect
+   MLIRSupport
++  MLIRUBDialect
++  MLIRVectorDialect
++  MLIROpenACCDialect
++  MLIROpenACCMPCommon
++  MLIROpenACCToLLVMIRTranslation
++  MLIROpenACCToSCF
++  MLIROpenACCTransforms
++  MLIROpenMPDialect
++  MLIROpenMPToLLVM
++  MLIROpenMPToLLVMIRTranslation
++  MLIROptLib
+ 
+   # Dialects.
+   TorchMLIRTMTensorDialect
+--- lib/Dialect/Torch/IR/CMakeLists.txt	2025-10-31 17:50:59.235139750 -0400
++++ lib/Dialect/Torch/IR/CMakeLists.txt	2025-11-03 07:44:17.701879625 -0500
+@@ -11,6 +11,7 @@
+   DEPENDS
+   MLIRTorchOpsIncGen
+   MLIRTorchTypesIncGen
++  TorchMLIRTorchUtils
+ 
+   LINK_LIBS PUBLIC
+   MLIRBytecodeOpInterface
+@@ -19,9 +20,11 @@
+   MLIRFuncDialect
+   MLIRIR
+   MLIRSupport
++  MLIRCastInterfaces
+   MLIRControlFlowInterfaces
+   MLIRInferTypeOpInterface
+   MLIRSideEffectInterfaces
++  TorchMLIRTorchUtils
+ )
+ 
+ torch_mlir_target_includes(TorchMLIRTorchDialect)
+--- lib/Dialect/Torch/Transforms/CMakeLists.txt	2025-10-31 17:50:59.235283459 -0400
++++ lib/Dialect/Torch/Transforms/CMakeLists.txt	2025-11-03 07:43:39.209175515 -0500
+@@ -29,6 +29,7 @@
+ 
+   DEPENDS
+   TorchMLIRTorchPassIncGen
++  TorchMLIRTorchUtils
+ 
+   LINK_LIBS PUBLIC
+   MLIRIR
+--- lib/InitAll.cpp	2025-10-31 17:50:59.238238307 -0400
++++ lib/InitAll.cpp	2025-12-09 23:07:17.736744789 -0500
+@@ -9,17 +9,22 @@
+ 
+ #include "torch-mlir/InitAll.h"
+ 
+-#include "mlir/Dialect/Complex/IR/Complex.h"
+-#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
+-#include "mlir/Dialect/Func/IR/FuncOps.h"
+-#include "mlir/Dialect/Linalg/IR/Linalg.h"
+-#include "mlir/Dialect/MLProgram/IR/MLProgram.h"
+-#include "mlir/Dialect/MemRef/IR/MemRef.h"
+-#include "mlir/Dialect/SCF/IR/SCF.h"
+-#include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"
+-#include "mlir/Dialect/Tensor/IR/Tensor.h"
+-#include "mlir/Dialect/Tensor/IR/TensorInferTypeOpInterfaceImpl.h"
+-#include "mlir/IR/Dialect.h"
++#include <mlir/Dialect/Complex/IR/Complex.h>
++#include <mlir/Dialect/Func/Extensions/InlinerExtension.h>
++#include <mlir/Dialect/Func/IR/FuncOps.h>
++#include <mlir/Dialect/Linalg/IR/Linalg.h>
++#include <mlir/Dialect/MLProgram/IR/MLProgram.h>
++#include <mlir/Dialect/MemRef/IR/MemRef.h>
++#include <mlir/Dialect/SCF/IR/SCF.h>
++#include <mlir/Dialect/SparseTensor/IR/SparseTensor.h>
++#include <mlir/Dialect/Tensor/IR/Tensor.h>
++#include <mlir/Dialect/Tensor/IR/TensorInferTypeOpInterfaceImpl.h>
++#include <mlir/IR/Dialect.h>
++#include <mlir/InitAllDialects.h>
++#include <mlir/InitAllPasses.h>
++#include <mlir/InitAllExtensions.h>
++#include <mlir/Transforms/Passes.h.inc>
++
+ #include "torch-mlir-dialects/Dialect/TMTensor/IR/TMTensorDialect.h"
+ #include "torch-mlir-dialects/Dialect/TMTensor/Transforms/Passes.h"
+ #include "torch-mlir/Conversion/Passes.h"
+@@ -41,7 +46,24 @@
+ #endif
+ 
+ void mlir::torch::registerAllDialects(mlir::DialectRegistry &registry) {
+-  registry.insert<mlir::func::FuncDialect>();
++  registry.insert<arith::ArithDialect,
++                  affine::AffineDialect,
++                  bufferization::BufferizationDialect,
++                  cf::ControlFlowDialect,
++                  DLTIDialect,
++                  func::FuncDialect,
++                  gpu::GPUDialect,
++                  mesh::MeshDialect,
++                  index::IndexDialect,
++                  irdl::IRDLDialect,
++                  LLVM::LLVMDialect,
++                  math::MathDialect,
++                  omp::OpenMPDialect,
++                  quant::QuantDialect,
++                  shape::ShapeDialect,
++                  ub::UBDialect,
++                  vector::VectorDialect>();
++
+   registry.insert<mlir::torch::Torch::TorchDialect>();
+   registry.insert<mlir::torch::TorchConversion::TorchConversionDialect>();
+   registry.insert<mlir::torch::TMTensor::TMTensorDialect>();
+@@ -53,8 +75,9 @@
+ }
+ 
+ // TODO: Break this up when backends are separated.
+-void mlir::torch::registerOptionalInputDialects(
+-    mlir::DialectRegistry &registry) {
++void
++mlir::torch::registerOptionalInputDialects(mlir::DialectRegistry &registry) {
++
+   registry.insert<complex::ComplexDialect, linalg::LinalgDialect,
+                   memref::MemRefDialect, ml_program::MLProgramDialect,
+                   scf::SCFDialect, sparse_tensor::SparseTensorDialect,
+@@ -84,3 +107,4 @@
+   mlir::torch::RefBackend::registerRefBackendPasses();
+ #endif
+ }
++
+--- projects/onnx_c_importer/CMakeLists.txt	2025-10-31 17:50:59.239561907 -0400
++++ projects/onnx_c_importer/CMakeLists.txt	2026-03-08 08:47:20.936247165 -0400
+@@ -1,27 +1,89 @@
+ message(STATUS "Enabling onnx_c_importer...")
+ 
+-include(FetchContent)
++include(FindPkgConfig)
+ 
+-find_package(Protobuf REQUIRED CONFIG)
++find_package(Protobuf REQUIRED)
++find_package(ONNX REQUIRED)
++if (NOT ONNX_FOUND)
++  message(FATAL_ERROR "Could not find ONNX")
++endif()
+ 
+-FetchContent_Declare(
+-    onnx
+-    EXCLUDE_FROM_ALL
+-    GIT_REPOSITORY https://github.com/onnx/onnx.git
+-    GIT_TAG v1.16.1
+-    GIT_SHALLOW ON
+-    GIT_PROGRESS ON
+-)
+-FetchContent_MakeAvailable(onnx)
++if (LINUX)
++  include(ONNXConfig)
++elseif (APPLE AND ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
++  include(ONNXConfig)
++endif()
++
++include_directories(${Protobuf_INCLUDE_DIR})
+ 
+ set(LLVM_REQUIRES_EH ON)
+ set(LLVM_REQUIRES_RTTI ON)
+ 
++if (APPLE AND ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
++  set(BUILD_SHARED_LIBS OFF)
++else()
++  set(BUILD_SHARED_LIBS ON)
++endif()
+ 
+-add_llvm_executable(
+-    torch-mlir-import-onnx
+-    PARTIAL_SOURCES_INTENDED
++set(USE_PROTOBUF_SHARED_LIBS ON)
++set(ONNX_BUILD_SHARED_LIBS ON)
++set(BUILD_ONNX_PYTHON ON)
++
++if (APPLE AND ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
++  set(PROTOBUF_ONNX_FILES ${ONNX_INCLUDE_DIR}/onnx.proto)
++  set(PROTOBUF_ONNX_OPERATORS_FILES ${ONNX_INCLUDE_DIR}/onnx-operators.proto)
++elseif (LINUX)
++  set(PROTOBUF_ONNX_FILES ${ONNX_INCLUDE_DIR}/onnx.proto)
++  set(PROTOBUF_ONNX_OPERATORS_FILES ${ONNX_INCLUDE_DIR}/onnx-operators.proto)
++endif()
+ 
++message(STATUS "PROTOBUF_ONNX_FILES: ${PROTOBUF_ONNX_FILES}")
++message(STATUS "PROTOBUF_ONNX_OPERATORS_FILES: ${PROTOBUF_ONNX_OPERATORS_FILES}")
++
++if (LINUX)
++  add_custom_target(protobuf_onnx_gen_files
++                    COMMAND ${Protobuf_PROTOC_EXECUTABLE} -I ${ONNX_INCLUDE_DIR} --proto_path ${ONNX_INCLUDE_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_FILES}
++                    COMMAND ${Protobuf_PROTOC_EXECUTABLE} -I ${ONNX_INCLUDE_DIR} --proto_path ${ONNX_INCLUDE_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_OPERATORS_FILES})
++elseif(APPLE AND ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
++  execute_process(COMMAND dirname ${ONNX_INCLUDE_DIR} OUTPUT_VARIABLE _ONNX_INCLUDE_PARENT_DIR)
++  string(STRIP ${_ONNX_INCLUDE_PARENT_DIR} ONNX_INCLUDE_PARENT_DIR)
++  add_custom_target(protobuf_onnx_gen_files
++                    COMMAND ${Protobuf_PROTOC_EXECUTABLE} -I${ONNX_INCLUDE_PARENT_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_FILES}
++                    COMMAND ${Protobuf_PROTOC_EXECUTABLE} -I${ONNX_INCLUDE_PARENT_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_OPERATORS_FILES})
++endif()
++
++add_compile_definitions(-DONNX_NAMESPACE=onnx)
++add_compile_options("-I${CMAKE_CURRENT_BINARY_DIR}")
++include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR})
++
++if (LINUX)
++  message(STATUS "${Protobuf_PROTOC_EXECUTABLE} -I ${ONNX_INCLUDE_DIR} --proto_path ${ONNX_INCLUDE_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_FILES}")
++  execute_process(COMMAND ${Protobuf_PROTOC_EXECUTABLE} -I ${ONNX_INCLUDE_DIR} --proto_path ${ONNX_INCLUDE_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_FILES} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
++elseif (APPLE AND ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
++  message(STATUS "dirname ${ONNX_INCLUDE_DIR}")
++  execute_process(COMMAND dirname ${ONNX_INCLUDE_DIR} OUTPUT_VARIABLE _ONNX_INCLUDE_PARENT_DIR)
++  string(STRIP ${_ONNX_INCLUDE_PARENT_DIR} ONNX_INCLUDE_PARENT_DIR)
++  message(STATUS "_ONNX_INCLUDE_PARENT_DIR: ${_ONNX_INCLUDE_PARENT_DIR}")
++  message(STATUS "ONNX_INCLUDE_PARENT_DIR: ${ONNX_INCLUDE_PARENT_DIR}")
++  message(STATUS "/bin/mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/onnx")
++  execute_process(COMMAND /bin/mkdir -p ${CMAKE_CURRENT_BINARY_DIR}/onnx)
++  message(STATUS "${Protobuf_PROTOC_EXECUTABLE} -I${ONNX_INCLUDE_PARENT_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_FILES}")
++  execute_process(COMMAND ${Protobuf_PROTOC_EXECUTABLE} -I${ONNX_INCLUDE_PARENT_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_FILES} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
++  message(STATUS "${Protobuf_PROTOC_EXECUTABLE} -I${ONNX_INCLUDE_PARENT_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_OPERATORS_FILES}")
++  execute_process(COMMAND ${Protobuf_PROTOC_EXECUTABLE} -I${ONNX_INCLUDE_PARENT_DIR} --cpp_out ${CMAKE_CURRENT_BINARY_DIR} ${PROTOBUF_ONNX_OPERATORS_FILES} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
++else()
++  message(FATAL_ERROR "Don't know how to generate onnx protobuf files on this OS.")
++endif()
++
++if (LINUX)
++  set(ONNX_GENERATED_FILES "${CMAKE_CURRENT_BINARY_DIR}/onnx/onnx.pb.h;${CMAKE_CURRENT_BINARY_DIR}/onnx/onnx.pb.cc" )
++elseif (APPLE AND ${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
++  set(ONNX_GENERATED_FILES "${CMAKE_CURRENT_BINARY_DIR}/onnx/onnx.pb.h;${CMAKE_CURRENT_BINARY_DIR}/onnx/onnx.pb.cc;${CMAKE_CURRENT_BINARY_DIR}/onnx/onnx-operators.pb.h;${CMAKE_CURRENT_BINARY_DIR}/onnx/onnx-operators.pb.cc" )
++else()
++  set(ONNX_GENERATED_FILES "/this/file/does/not/exist.h;/this/file/does/not/exist.cc")
++endif()
++
++add_executable(torch-mlir-import-onnx
+     import-onnx-main.cpp
+     OnnxImporter.h
+     OnnxImporter.cpp
+@@ -29,13 +91,16 @@
+     Dict.hpp
+     Status.hpp
+     onnx_extras.hpp
+-)
++               ${ONNX_GENERATED_FILES})
++
++add_dependencies(torch-mlir-import-onnx protobuf_onnx_gen_files)
+ 
+ set_target_properties(torch-mlir-import-onnx PROPERTIES CXX_STANDARD 20)
+ 
+ # Supress compiler warnings from onnx headers
+ check_cxx_compiler_flag(-Wno-c++98-compat-extra-semi
+ CXX_SUPPORTS_NO_CXX98_COMPAT_EXTRA_SEMI_FLAG)
++
+ if (CXX_SUPPORTS_CXX98_COMPAT_EXTRA_SEMI_FLAG)
+     target_compile_options(torch-mlir-import-onnx PRIVATE
+         "-Wno-c++98-compat-extra-semi")
+@@ -43,9 +108,37 @@
+         "-Wno-c++98-compat-extra-semi")
+ endif()
+ 
++target_compile_options(torch-mlir-import-onnx PRIVATE "-O1")
++
+ target_link_libraries(
+     torch-mlir-import-onnx
++    MLIRAffineDialect
++    MLIRArithDialect
++    MLIRBufferizationDialect
++    MLIRControlFlowDialect
++    MLIRComplexDialect
+     MLIRCAPIIR
++    MLIRDLTIDialect
++    MLIRFuncDialect
++    MLIRGPUDialect
++    MLIRIndexDialect
++    MLIRIRDL
++    MLIRLinalgDialect
++    MLIRLLVMDialect
++    MLIRMathDialect
++    MLIRMemRefDialect
++    MLIRMLProgramDialect
++    MLIROpenMPDialect
++    MLIRQuantDialect
++    MLIRSCFDialect
++    MLIRShapeDialect
++    MLIRSparseTensorDialect
++    MLIRTensorDialect
++    MLIRTosaDialect
++    MLIRUBDialect
++    MLIRVectorDialect
+     TorchMLIRCAPI
+     onnx
+-)
++    onnx_proto
++    protobuf
++    protoc)
+--- projects/onnx_c_importer/Dict.hpp	2025-10-31 17:50:59.239692282 -0400
++++ projects/onnx_c_importer/Dict.hpp	2025-12-02 21:03:08.372521460 -0500
+@@ -17,7 +17,7 @@
+ 
+ #pragma once
+ 
+-#include <unordered_map>
++#include <map>
+ #include <vector>
+ 
+ namespace torch_mlir_onnx {
+@@ -28,7 +28,7 @@
+   using mapped_type = _Tp;
+   using self = DictIterator<key_type, mapped_type>;
+   using vector = std::vector<key_type>;
+-  using key_value_map = std::unordered_map<key_type, mapped_type>;
++  using key_value_map = std::map<key_type, mapped_type>;
+   using vector_iterator = typename vector::iterator;
+ 
+   vector_iterator v_it_;
+@@ -72,7 +72,7 @@
+   using mapped_type = _Tp;
+   using self = DictConstIterator<key_type, mapped_type>;
+   using vector = std::vector<key_type>;
+-  using key_value_map = std::unordered_map<key_type, mapped_type>;
++  using key_value_map = std::map<key_type, mapped_type>;
+   using vector_const_iterator = typename vector::const_iterator;
+ 
+   vector_const_iterator v_it_;
+@@ -114,14 +114,14 @@
+ template <typename _Key, typename _Tp> class Dict {
+ 
+ private:
+-  using key_value_map = std::unordered_map<_Key, _Tp>;
++  using key_value_map = std::map<_Key, _Tp>;
+   using key_vector = std::vector<_Key>;
+   using key_index_map =
+-      std::unordered_map<_Key, typename key_vector::iterator::difference_type>;
++      std::map<_Key, typename key_vector::iterator::difference_type>;
+ 
+-  key_value_map m_;
+-  key_vector k_;
+-  key_index_map i_;
++  mutable key_value_map m_;
++  mutable key_vector k_;
++  mutable key_index_map i_;
+ 
+ public:
+   /// Public typedefs.
+@@ -145,8 +145,25 @@
+   Dict(const Dict &) = default;
+   Dict(Dict &&) = default;
+ 
+-  Dict &operator=(const Dict &) = default;
+-  Dict &operator=(Dict &&) = default;
++  Dict &operator=(const Dict &rhs) {
++    if (this != &rhs) {
++      m_ = rhs.m_;
++      k_ = rhs.k_;
++      i_ = rhs.i_;
++    }
++
++    return *this;
++  }
++
++  Dict &operator=(Dict &&rhs) {
++    if (this != &rhs) {
++      m_ = std::move(rhs.m_);
++      k_ = std::move(rhs.k_);
++      i_ = std::move(rhs.i_);
++    }
++
++    return *this;
++  }
+ 
+   ~Dict() = default;
+ 
+@@ -194,6 +211,7 @@
+   std::pair<iterator, bool> emplace(_Args &&...args) {
+     return insert(value_type(std::forward<_Args>(args)...));
+   }
++
+   reference operator[](const key_type &key) {
+     auto ins = emplace(key, mapped_type());
+     return (*ins.first).second;
+--- projects/onnx_c_importer/import-onnx-main.cpp	2025-10-31 17:50:59.239692282 -0400
++++ projects/onnx_c_importer/import-onnx-main.cpp	2025-11-30 13:45:55.788848568 -0500
+@@ -15,11 +15,11 @@
+ #include "SimpleArgParser.hpp"
+ #include "onnx_extras.hpp"
+ 
+-#include "onnx/checker.h"
+-#include "onnx/common/file_utils.h"
+-#include "onnx/onnx_pb.h"
+-#include "onnx/shape_inference/implementation.h"
+-#include "onnx/version_converter/convert.h"
++#include <onnx/checker.h>
++#include <onnx/common/file_utils.h>
++#include <onnx/onnx_pb.h>
++#include <onnx/shape_inference/implementation.h>
++#include <onnx/version_converter/convert.h>
+ 
+ #include <fstream>
+ #include <iostream>
+--- projects/onnx_c_importer/onnx_extras.hpp	2025-10-31 17:50:59.239692282 -0400
++++ projects/onnx_c_importer/onnx_extras.hpp	2025-12-01 18:37:30.792542421 -0500
+@@ -14,6 +14,7 @@
+ 
+ #include "Status.hpp"
+ 
++#include <filesystem>
+ #include <optional>
+ 
+ namespace fs = std::filesystem;
+@@ -29,25 +30,23 @@
+ 
+   static ExternalDataInfo FromTensorProto(const onnx::TensorProto &tp) {
+ 
+-    static std::unordered_map<
+-        std::string,
++    static std::unordered_map<std::string,
+         std::function<void(const std::string &, ExternalDataInfo &)>>
+         handlers{
+             {"location", [](const std::string &value,
+                             ExternalDataInfo &edi) { edi.location = value; }},
+-            {"offset",
+-             [](const std::string &value, ExternalDataInfo &edi) {
++            { "offset", [](const std::string &value, ExternalDataInfo &edi) {
+                edi.offset = std::stoul(value);
+              }},
+-            {"length",
+-             [](const std::string &value, ExternalDataInfo &edi) {
++            { "length", [](const std::string &value, ExternalDataInfo &edi) {
+                edi.length = std::stoul(value);
+              }},
+             {"checksum", [](const std::string &value,
+                             ExternalDataInfo &edi) { edi.checksum = value; }},
+             {"basepath", [](const std::string &value, ExternalDataInfo &edi) {
+                edi.basepath = value;
+-             }}};
++             } }
++        };
+ 
+     ExternalDataInfo edi;
+     for (const auto &entry : tp.external_data()) {
+--- projects/onnx_c_importer/OnnxImporter.cpp	2025-10-31 17:50:59.239692282 -0400
++++ projects/onnx_c_importer/OnnxImporter.cpp	2025-12-02 21:03:31.059353531 -0500
+@@ -368,28 +368,41 @@
+       return model_info_.SetError("ONNX initializer name already used: " +
+                                   t.name());
+     }
+-    InitializerMapEmplace(t.name(), t);
++
++    InitializerMapEmplace(t.name(), &t);
+   }
++
+   for (const onnx::ValueInfoProto &v : graph_proto_.value_info()) {
+-    if (value_info_map_.find(v.name()) != value_info_map_.end()) {
++    onnx::ValueInfoProto& non_const_v = const_cast<onnx::ValueInfoProto&>(v);
++    if (value_info_map_.find(non_const_v.name()) != value_info_map_.end()) {
+       return model_info_.SetError("ONNX value_info name already used: " +
+-                                  v.name());
++                                  non_const_v.name());
+     }
+-    value_info_map_.emplace(v.name(), v);
++
++    value_info_map_.emplace(v.name(), &v);
++    // value_info_map_.emplace(v.name(), non_const_v);
+   }
++
+   for (const onnx::ValueInfoProto &v : graph_proto_.input()) {
+-    if (declared_input_map_.find(v.name()) != declared_input_map_.end()) {
++    onnx::ValueInfoProto& non_const_v = const_cast<onnx::ValueInfoProto&>(v);
++    if (declared_input_map_.find(non_const_v.name()) != declared_input_map_.end()) {
+       return model_info_.SetError("ONNX value_info name already used: " +
+-                                  v.name());
++                                  non_const_v.name());
+     }
+-    declared_input_map_.emplace(v.name(), v);
++
++    declared_input_map_.emplace(v.name(), &v);
++    // declared_input_map_.emplace(v.name(), non_const_v);
+   }
++
+   for (const onnx::ValueInfoProto &v : graph_proto_.output()) {
+-    if (output_map_.find(v.name()) != output_map_.end()) {
++    onnx::ValueInfoProto& non_const_v = const_cast<onnx::ValueInfoProto&>(v);
++    if (output_map_.find(non_const_v.name()) != output_map_.end()) {
+       return model_info_.SetError("ONNX value_info name already used: " +
+-                                  v.name());
++                                  non_const_v.name());
+     }
+-    output_map_.emplace(v.name(), v);
++
++    output_map_.emplace(v.name(), &v);
++    // output_map_.emplace(v.name(), non_const_v);
+   }
+ 
+   // Generate the effective input map, which for old models can be a subset of
+@@ -403,6 +416,7 @@
+         // In initializers. Skip.
+         continue;
+       }
++
+       input_map_.emplace(key, decIn.second);
+     }
+   } else {
+@@ -415,6 +429,7 @@
+         illegalKeys.push_back(key);
+       }
+     }
++
+     if (!illegalKeys.empty()) {
+       std::string error = "When not in elide_initialized_inputs=true mode, we "
+                           "expect inputs to not have an initial value (got " +
+@@ -433,19 +448,19 @@
+   {
+     auto it = value_info_map_.find(name);
+     if (it != value_info_map_.end()) {
+-      return &it->second.type();
++      return &it->second->type();
+     }
+   }
+   {
+     auto it = output_map_.find(name);
+     if (it != output_map_.end()) {
+-      return &it->second.type();
++      return &it->second->type();
+     }
+   }
+   {
+     auto it = declared_input_map_.find(name);
+     if (it != declared_input_map_.end()) {
+-      return &it->second.type();
++      return &it->second->type();
+     }
+   }
+   {
+@@ -459,12 +474,11 @@
+ }
+ 
+ void GraphInfo::InitializerMapEmplace(const std::string_view &name,
+-                                      const onnx::TensorProto &tp) {
+-  initializer_map_.emplace(
+-      name,
++                                      const onnx::TensorProto* tp) {
++  initializer_map_.emplace(name,
+       std::pair<const onnx::TensorProto &, onnx::TypeProto>(
+-          tp, MakeTensorTypeProto(onnx::TensorProto_DataType(tp.data_type()),
+-                                  tp.dims())));
++          *tp, MakeTensorTypeProto(onnx::TensorProto_DataType(tp->data_type()),
++                                  tp->dims())));
+ }
+ 
+ // ---------------------------------------------------------------------------//
+@@ -1085,7 +1099,7 @@
+   std::vector<MlirLocation> inputLocs;
+   std::vector<MlirType> outputTypes;
+   for (const auto &input : graphInfo.GetInputMap()) {
+-    MlirType t = contextCache.ConvertTypeProto(&input.second.type());
++    MlirType t = contextCache.ConvertTypeProto(&input.second->type());
+     if (mlirTypeIsNull(t)) {
+       return failure;
+     }
+@@ -1095,7 +1109,7 @@
+                                             /*childLoc=*/{nullptr}));
+   }
+   for (const auto &output : graphInfo.GetOutputMap()) {
+-    MlirType t = contextCache.ConvertTypeProto(&output.second.type());
++    MlirType t = contextCache.ConvertTypeProto(&output.second->type());
+     if (mlirTypeIsNull(t)) {
+       return failure;
+     }
+@@ -1615,7 +1629,8 @@
+     return SetError("ONNX initializer name already present: " +
+                     std::string(constName));
+   }
+-  graph_info_.InitializerMapEmplace(constName, valueProto->t());
++
++  graph_info_.InitializerMapEmplace(constName, &valueProto->t());
+   return success;
+ }
+ 
+--- projects/onnx_c_importer/OnnxImporter.h	2025-10-31 17:50:59.239692282 -0400
++++ projects/onnx_c_importer/OnnxImporter.h	2025-12-02 20:48:54.418861981 -0500
+@@ -109,24 +109,26 @@
+   /// an error will have been set.
+   const onnx::TypeProto *FindTypeProtoForName(std::string_view name);
+ 
+-  Dict<std::string_view, const onnx::ValueInfoProto &> &GetInputMap() {
++  Dict<std::string_view, const onnx::ValueInfoProto*> &GetInputMap() {
+     return input_map_;
+   }
+-  const Dict<std::string_view, const onnx::ValueInfoProto &> &
++
++  const Dict<std::string_view, const onnx::ValueInfoProto*> &
+   GetInputMap() const {
+     return input_map_;
+   }
+ 
+-  Dict<std::string_view, const onnx::ValueInfoProto &> &GetOutputMap() {
++  const Dict<std::string_view, const onnx::ValueInfoProto*> &GetOutputMap() {
+     return output_map_;
+   }
+-  const Dict<std::string_view, const onnx::ValueInfoProto &> &
++
++  const Dict<std::string_view, const onnx::ValueInfoProto*> &
+   GetOutputMap() const {
+     return output_map_;
+   }
+ 
+   void InitializerMapEmplace(const std::string_view &name,
+-                             const onnx::TensorProto &tp);
++                             const onnx::TensorProto* tp);
+   const InitializerMapT &GetInitializerMap() const { return initializer_map_; }
+ 
+ private:
+@@ -134,11 +136,10 @@
+   const onnx::GraphProto &graph_proto_;
+ 
+   InitializerMapT initializer_map_;
+-  Dict<std::string_view, const onnx::ValueInfoProto &> value_info_map_;
+-  Dict<std::string_view, const onnx::ValueInfoProto &> declared_input_map_;
+-  Dict<std::string_view, const onnx::ValueInfoProto &> output_map_;
+-  Dict<std::string_view, const onnx::ValueInfoProto &> input_map_;
+-
++  mutable Dict<std::string_view, const onnx::ValueInfoProto*> value_info_map_;
++  mutable Dict<std::string_view, const onnx::ValueInfoProto*> declared_input_map_;
++  mutable Dict<std::string_view, const onnx::ValueInfoProto*> output_map_;
++  mutable Dict<std::string_view, const onnx::ValueInfoProto*> input_map_;
+   bool is_top_level_;
+ };
+ 
+--- python/CMakeLists.txt	2025-10-31 17:50:59.247109862 -0400
++++ python/CMakeLists.txt	2025-10-31 20:56:15.568044891 -0400
+@@ -84,6 +84,7 @@
+ # testing.
+ ################################################################################
+ 
++if (NOT TORCH_MLIR_OUT_OF_TREE_BUILD)
+ set(_source_components
+   # TODO: Core is now implicitly building/registering all dialects, increasing
+   # build burden by ~5x. Make it stop.
+@@ -98,6 +99,12 @@
+   TorchMLIRPythonExtensions
+   TorchMLIRSiteInitialize
+ )
++else()
++  set(_source_components
++    TorchMLIRPythonSources
++    TorchMLIRPythonExtensions
++    TorchMLIRPythonTorchExtensionsSources)
++endif()
+ 
+ if(TORCH_MLIR_ENABLE_STABLEHLO)
+   list(APPEND _source_components StablehloPythonExtensions)
+--- setup.py	2025-10-31 17:50:59.247900856 -0400
++++ setup.py	2025-12-02 13:58:47.615655455 -0500
+@@ -78,6 +78,7 @@
+ TORCH_MLIR_ENABLE_ONLY_MLIR_PYTHON_BINDINGS = _check_env_flag(
+     "TORCH_MLIR_ENABLE_ONLY_MLIR_PYTHON_BINDINGS", True
+ )
++
+ LLVM_INSTALL_DIR = os.getenv("LLVM_INSTALL_DIR", None)
+ SRC_DIR = pathlib.Path(__file__).parent.absolute()
+ CMAKE_BUILD_TYPE = os.getenv("CMAKE_BUILD_TYPE", "Release")
+@@ -85,7 +86,11 @@
+ TORCH_MLIR_CMAKE_ALREADY_BUILT = _check_env_flag(
+     "TORCH_MLIR_CMAKE_ALREADY_BUILT", False
+ )
++
+ TORCH_MLIR_CMAKE_BUILD_DIR = os.getenv("TORCH_MLIR_CMAKE_BUILD_DIR")
++LLVM_TARGETS_TO_BUILD = os.getenv("LLVM_TARGETS_TO_BUILD", "X86;")
++TORCH_MLIR_CMAKE_FLAGS = os.getenv("TORCH_MLIR_CMAKE_FLAGS", "")
++
+ MAX_JOBS = os.getenv("MAX_JOBS", str(multiprocessing.cpu_count()))
+ 
+ 
+@@ -110,20 +115,16 @@
+ 
+         cmake_config_args = [
+             f"cmake",
++            f"-G \"Unix Makefiles\"",
++            f"{TORCH_MLIR_CMAKE_FLAGS}",
+             f"-DCMAKE_BUILD_TYPE={CMAKE_BUILD_TYPE}",
+             f"-DPython3_EXECUTABLE={sys.executable}",
+-            f"-DPython3_FIND_VIRTUALENV=ONLY",
+             f"-DPython_EXECUTABLE={sys.executable}",
+-            f"-DPython_FIND_VIRTUALENV=ONLY",
+             f"-DMLIR_ENABLE_BINDINGS_PYTHON=ON",
+-            f"-DLLVM_TARGETS_TO_BUILD=host",
+-            f"-DLLVM_ENABLE_ZSTD=OFF",
+-            # Optimization options for building wheels.
+-            f"-DCMAKE_VISIBILITY_INLINES_HIDDEN=ON",
+-            f"-DCMAKE_C_VISIBILITY_PRESET=hidden",
+-            f"-DCMAKE_CXX_VISIBILITY_PRESET=hidden",
+-            f"-DTORCH_MLIR_ENABLE_LTC={'ON' if TORCH_MLIR_ENABLE_LTC else 'OFF'}",
+-            f"-DTORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS={'OFF' if TORCH_MLIR_ENABLE_ONLY_MLIR_PYTHON_BINDINGS else 'ON'}",
++            f"-DLLVM_TARGETS_TO_BUILD={LLVM_TARGETS_TO_BUILD}",
++            f"-DLLVM_ENABLE_ZSTD=ON",
++            f"-DTORCH_MLIR_ENABLE_LTC=ON",
++            f"-DTORCH_MLIR_ENABLE_PYTORCH_EXTENSIONS=ON",
+         ]
+         if LLVM_INSTALL_DIR:
+             cmake_config_args += [

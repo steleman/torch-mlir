@@ -2,8 +2,7 @@
 wheel
 setuptools
 cmake
-ninja<1.13.0; sys_platform == 'win32'
-ninja; sys_platform != 'win32'
+ninja
 packaging
 
 # Workaround for what should be a torch dep

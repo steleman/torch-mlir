@@ -33,15 +33,14 @@ public:
     Value self = adaptor.getSelf();
     Value dim = adaptor.getDim();
     auto type = cast<RankedTensorType>(self.getType());
-    Value inputRank = arith::ConstantOp::create(
-        rewriter, loc, rewriter.getI64IntegerAttr(type.getRank()));
+    Value inputRank = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64IntegerAttr(type.getRank()));
     Value dimPositive = toPositiveDimDynamic(rewriter, loc, dim, inputRank);
     if (!isAssumingStrictSymbolicShapes(rewriter)) {
       assertIsValidDim(rewriter, loc, dimPositive, inputRank);
     }
-    Value size =
-        tensor::DimOp::create(rewriter, loc, adaptor.getSelf(),
-                              castIntToIndex(rewriter, loc, dimPositive));
+    Value size = rewriter.create<tensor::DimOp>(
+        loc, adaptor.getSelf(), castIntToIndex(rewriter, loc, dimPositive));
     rewriter.replaceOp(op, castIndexToInt64(rewriter, loc, size));
     return success();
   }
@@ -87,15 +86,15 @@ public:
     // `input` is a zero rank tensor or all the dimensions of the `input` tensor
     // are unit.
     Value constantOne =
-        arith::ConstantOp::create(rewriter, loc, rewriter.getI64IntegerAttr(1));
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getI64IntegerAttr(1));
     for (int64_t i = 0; i < inputRank; i++)
       checkDimEqualHelper(rewriter, loc, inputSizes[i], constantOne);
 
     // Extract the only element from the `input` tensor.
     Value constantZero =
-        arith::ConstantOp::create(rewriter, loc, rewriter.getIndexAttr(0));
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(0));
     SmallVector<Value> indices(inputRank, constantZero);
-    Value result = tensor::ExtractOp::create(rewriter, loc, input, indices);
+    Value result = rewriter.create<tensor::ExtractOp>(loc, input, indices);
     Type resultType =
         this->getTypeConverter()->convertType(op->getResult(0).getType());
     rewriter.replaceOp(op, convertScalarToDtype(rewriter, loc, result,
@@ -208,14 +207,10 @@ public:
       return rewriter.notifyMatchFailure(
           op, "rank of shape and result shape do not match");
 
-    SmallVector<Value> inShapeConverted = getTypeConvertedValues(
-        rewriter, loc, this->getTypeConverter(), inShape);
-
     SmallVector<OpFoldResult> filteredShape;
     for (int i = 0, s = resultTy.getRank(); i < s; ++i) {
       if (resultTy.isDynamicDim(i)) {
-        filteredShape.push_back(
-            castIntToIndex(rewriter, loc, inShapeConverted[i]));
+        filteredShape.push_back(inShape[i]);
         continue;
       }
 
@@ -223,23 +218,22 @@ public:
     }
 
     Value full = adaptor.getFillValue();
-    Type targetElementType = resultTy.getElementType();
-    Type srcOriginalDtype = op.getFillValue().getType();
-    Type dstOriginalDtype;
 
-    if (auto originalTensorTy =
-            dyn_cast<ValueTensorType>(op.getResult().getType())) {
-      dstOriginalDtype = originalTensorTy.getDtype();
+    if (full.getType() != resultTy.getElementType()) {
+      if (isa<mlir::FloatType>(full.getType())) {
+        full = rewriter.create<arith::TruncFOp>(loc, resultTy.getElementType(),
+                                                full);
+      } else if (isa<mlir::IntegerType>(full.getType())) {
+        full = rewriter.create<arith::TruncIOp>(loc, resultTy.getElementType(),
+                                                full);
+      }
     }
 
-    Value castedFull = convertScalarToDtype(
-        rewriter, loc, full, targetElementType, srcOriginalDtype,
-        dstOriginalDtype, op.getFillValue());
+    Value outTensor = rewriter.create<tensor::EmptyOp>(
+        loc, filteredShape, resultTy.getElementType());
 
-    Value outTensor = tensor::EmptyOp::create(rewriter, loc, filteredShape,
-                                              resultTy.getElementType());
+    rewriter.replaceOpWithNewOp<linalg::FillOp>(op, full, outTensor);
 
-    rewriter.replaceOpWithNewOp<linalg::FillOp>(op, castedFull, outTensor);
     return success();
   }
 };

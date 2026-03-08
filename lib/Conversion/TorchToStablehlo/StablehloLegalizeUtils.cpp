@@ -39,8 +39,8 @@ Value getConstantLike(OpBuilder &rewriter, Location loc, T constant,
       return mlir::complex::NumberAttr::get(complexTy, constant, 0);
     llvm_unreachable("unhandled element type");
   };
-  return mlir::chlo::ConstantLikeOp::create(rewriter, loc,
-                                            cast<TypedAttr>(getAttr()), val);
+  return rewriter.create<mlir::chlo::ConstantLikeOp>(
+      loc, cast<TypedAttr>(getAttr()), val);
 }
 
 // Template instantiation
@@ -56,8 +56,8 @@ Value getStablehloConstTensorSingleF32(PatternRewriter &rewriter, Operation *op,
   auto const_type = RankedTensorType::get({}, rewriter.getF32Type());
   auto const_attr = DenseElementsAttr::get(const_type, val);
 
-  auto const_op = stablehlo::ConstantOp::create(rewriter, op->getLoc(),
-                                                const_type, const_attr);
+  auto const_op = rewriter.create<stablehlo::ConstantOp>(
+      op->getLoc(), const_type, const_attr);
   return const_op.getResult();
 }
 
@@ -67,8 +67,8 @@ Value getStablehloConstTensorSingleF64(PatternRewriter &rewriter, Operation *op,
   auto const_type = RankedTensorType::get({}, rewriter.getF64Type());
   auto const_attr = DenseElementsAttr::get(const_type, val);
 
-  auto const_op = stablehlo::ConstantOp::create(rewriter, op->getLoc(),
-                                                const_type, const_attr);
+  auto const_op = rewriter.create<stablehlo::ConstantOp>(
+      op->getLoc(), const_type, const_attr);
   return const_op.getResult();
 }
 
@@ -102,8 +102,8 @@ std::optional<Value> getConstTensor(PatternRewriter &rewriter, Operation *op,
   }
   auto const_attr = DenseElementsAttr::get(const_type, vec);
 
-  auto const_op = stablehlo::ConstantOp::create(rewriter, op->getLoc(),
-                                                const_type, const_attr);
+  auto const_op = rewriter.create<stablehlo::ConstantOp>(
+      op->getLoc(), const_type, const_attr);
   return const_op.getResult();
 }
 
@@ -153,27 +153,27 @@ Value getSplatConstTensor(ConversionPatternRewriter &rewriter, Operation *op,
                           T val, Type dtype, llvm::ArrayRef<int64_t> dshape) {
   auto const_type = RankedTensorType::get(dshape, dtype);
   auto const_attr = SplatElementsAttr::get(const_type, val);
-  auto const_op = stablehlo::ConstantOp::create(rewriter, op->getLoc(),
-                                                const_type, const_attr);
+  auto const_op = rewriter.create<stablehlo::ConstantOp>(
+      op->getLoc(), const_type, const_attr);
   return const_op.getResult();
 }
 
 Value scalarToStablehloTensor(ConversionPatternRewriter &rewriter,
                               Operation *op, Value scalarValue, Type dtype) {
-  auto tensor = tensor::FromElementsOp::create(rewriter, op->getLoc(),
-                                               ArrayRef<Value>{scalarValue});
+  auto tensor = rewriter.create<tensor::FromElementsOp>(
+      op->getLoc(), ArrayRef<Value>{scalarValue});
   auto dtype_tensor =
-      stablehlo::ConvertOp::create(rewriter, op->getLoc(), tensor, dtype);
-  return stablehlo::ReshapeOp::create(
-      rewriter, op->getLoc(),
-      RankedTensorType::get(mlir::ArrayRef<int64_t>{}, dtype), dtype_tensor);
+      rewriter.create<stablehlo::ConvertOp>(op->getLoc(), tensor, dtype);
+  return rewriter.create<stablehlo::ReshapeOp>(
+      op->getLoc(), RankedTensorType::get(mlir::ArrayRef<int64_t>{}, dtype),
+      dtype_tensor);
 }
 
 Value promoteType(PatternRewriter &rewriter, Location loc, Value input,
                   Type outElementType) {
   TensorType inType = cast<TensorType>(input.getType());
   if (inType.getElementType() != outElementType) {
-    return stablehlo::ConvertOp::create(rewriter, loc, input, outElementType);
+    return rewriter.create<stablehlo::ConvertOp>(loc, input, outElementType);
   }
   return input;
 }
@@ -194,8 +194,8 @@ Value promoteAndBroadcast(ConversionPatternRewriter &rewriter, Value input,
   if (in_type.getElementType() != outType.getElementType()) {
     TensorType promoted_type =
         in_type.cloneWith(in_type.getShape(), outType.getElementType());
-    input = stablehlo::ConvertOp::create(rewriter, op->getLoc(), promoted_type,
-                                         input);
+    input = rewriter.create<stablehlo::ConvertOp>(op->getLoc(), promoted_type,
+                                                  input);
   }
 
   ArrayRef<int64_t> inShape = in_type.getShape();
@@ -226,13 +226,12 @@ Value promoteAndBroadcast(ConversionPatternRewriter &rewriter, Value input,
   }
   auto bcast_attr = rewriter.getDenseI64ArrayAttr(bcastDims);
   if (bcastSizeTensor.has_value()) {
-    auto bcast_op = stablehlo::DynamicBroadcastInDimOp::create(
-        rewriter, op->getLoc(), outType, input, bcastSizeTensor.value(),
-        bcast_attr);
+    auto bcast_op = rewriter.create<stablehlo::DynamicBroadcastInDimOp>(
+        op->getLoc(), outType, input, bcastSizeTensor.value(), bcast_attr);
     return bcast_op.getResult();
   }
-  auto bcast_op = stablehlo::BroadcastInDimOp::create(
-      rewriter, op->getLoc(), outType, input, bcast_attr);
+  auto bcast_op = rewriter.create<stablehlo::BroadcastInDimOp>(
+      op->getLoc(), outType, input, bcast_attr);
   return bcast_op.getResult();
 }
 
@@ -262,9 +261,9 @@ FailureOr<SmallVector<Value, 4>> getDimSizesOfTensor(PatternRewriter &rewriter,
 
   auto loc = op->getLoc();
   for (auto d : dims) {
-    dimSizes.emplace_back(arith::IndexCastOp::create(
-        rewriter, loc, rewriter.getIntegerType(dimSizeIndexBits),
-        tensor::DimOp::create(rewriter, loc, value, d)));
+    dimSizes.emplace_back(rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getIntegerType(dimSizeIndexBits),
+        rewriter.create<tensor::DimOp>(loc, value, d)));
   }
   return dimSizes;
 }
@@ -302,7 +301,7 @@ getDimIndexOfTensor(PatternRewriter &rewriter, Operation *op, Value value,
 
   auto loc = op->getLoc();
   for (auto d : dims) {
-    dimSizes.emplace_back(tensor::DimOp::create(rewriter, loc, value, d));
+    dimSizes.emplace_back(rewriter.create<tensor::DimOp>(loc, value, d));
   }
   return dimSizes;
 }
@@ -343,8 +342,8 @@ getBroadcastResultShape(PatternRewriter &rewriter, Operation *op,
     int dynamicDimCnt = 0;
     int staticDimCnt = 0;
     int64_t dimSize = -1;
-    Value dimSizeTensor = mlir::arith::ConstantOp::create(
-        rewriter, op->getLoc(),
+    Value dimSizeTensor = rewriter.create<mlir::arith::ConstantOp>(
+        op->getLoc(),
         rewriter.getIntegerAttr(rewriter.getIntegerType(dimSizeIndexBits), 1));
 
     for (size_t i = 0; i < tensorSizes.size(); ++i) { // loop tensors.
@@ -401,7 +400,7 @@ getBroadcastResultShape(PatternRewriter &rewriter, Operation *op,
   std::reverse(bcastSizes.begin(), bcastSizes.end());
   std::reverse(bcastSizeTensors.begin(), bcastSizeTensors.end());
   return std::pair<Value, SmallVector<int64_t>>(
-      tensor::FromElementsOp::create(rewriter, op->getLoc(), bcastSizeTensors)
+      rewriter.create<tensor::FromElementsOp>(op->getLoc(), bcastSizeTensors)
           .getResult(),
       bcastSizes);
 }
@@ -433,8 +432,8 @@ FailureOr<Value> unsqueezeTensor(PatternRewriter &rewriter, Operation *op,
   auto loc = op->getLoc();
   auto rankTy = dyn_cast<RankedTensorType>(tensor.getType());
   auto oldShape = rankTy.getShape();
-  auto one = arith::ConstantOp::create(
-      rewriter, loc, rewriter.getIntegerAttr(rewriter.getIndexType(), 1));
+  auto one = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getIntegerAttr(rewriter.getIndexType(), 1));
 
   std::vector<Value> newDimSizes;
   std::vector<int64_t> newShape;
@@ -453,9 +452,8 @@ FailureOr<Value> unsqueezeTensor(PatternRewriter &rewriter, Operation *op,
   }
 
   auto outTy = RankedTensorType::get(newShape, rankTy.getElementType());
-  auto shape = tensor::FromElementsOp::create(rewriter, loc, newDimSizes);
-  return stablehlo::DynamicReshapeOp::create(rewriter, loc, outTy, tensor,
-                                             shape)
+  auto shape = rewriter.create<tensor::FromElementsOp>(loc, newDimSizes);
+  return rewriter.create<stablehlo::DynamicReshapeOp>(loc, outTy, tensor, shape)
       .getResult();
 }
 
@@ -485,8 +483,8 @@ FailureOr<Value> collapseTensor(PatternRewriter &rewriter, Operation *op,
   newDimSizes.reserve(newRank);
   newShape.reserve(newRank);
 
-  Value collapseDimSize = arith::ConstantOp::create(
-      rewriter, loc, rewriter.getIntegerAttr(rewriter.getIndexType(), 1));
+  Value collapseDimSize = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getIntegerAttr(rewriter.getIndexType(), 1));
   int64_t collapseShape = 1;
 
   for (int64_t k = collapseStartDim; k <= collapseEndDim; ++k) {
@@ -501,7 +499,7 @@ FailureOr<Value> collapseTensor(PatternRewriter &rewriter, Operation *op,
       collapseShape *= oldShape[k];
     }
     collapseDimSize =
-        arith::MulIOp::create(rewriter, loc, collapseDimSize, dimSizes[k]);
+        rewriter.create<arith::MulIOp>(loc, collapseDimSize, dimSizes[k]);
   }
 
   for (int64_t k = 0; k < collapseStartDim; ++k) {
@@ -516,9 +514,8 @@ FailureOr<Value> collapseTensor(PatternRewriter &rewriter, Operation *op,
   }
 
   auto outTy = RankedTensorType::get(newShape, rankTy.getElementType());
-  auto shape = tensor::FromElementsOp::create(rewriter, loc, newDimSizes);
-  return stablehlo::DynamicReshapeOp::create(rewriter, loc, outTy, tensor,
-                                             shape)
+  auto shape = rewriter.create<tensor::FromElementsOp>(loc, newDimSizes);
+  return rewriter.create<stablehlo::DynamicReshapeOp>(loc, outTy, tensor, shape)
       .getResult();
 }
 
@@ -545,12 +542,11 @@ FailureOr<Value> splitTensor(PatternRewriter &rewriter, Operation *op,
   }
 
   int64_t newRank = rank + 1;
-  auto outerLengthValue = arith::ConstantOp::create(
-      rewriter, loc,
-      rewriter.getIntegerAttr(rewriter.getIndexType(), outerLength));
+  auto outerLengthValue = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getIntegerAttr(rewriter.getIndexType(), outerLength));
 
-  auto innerLengthValue = arith::DivSIOp::create(
-      rewriter, loc, dimSizes[splitDim], outerLengthValue);
+  auto innerLengthValue = rewriter.create<arith::DivSIOp>(
+      loc, dimSizes[splitDim], outerLengthValue);
 
   int64_t originShape = oldShape[splitDim];
   int64_t outerShape = outerLength;
@@ -579,9 +575,8 @@ FailureOr<Value> splitTensor(PatternRewriter &rewriter, Operation *op,
   }
 
   auto outTy = RankedTensorType::get(newShape, rankTy.getElementType());
-  auto shape = tensor::FromElementsOp::create(rewriter, loc, newDimSizes);
-  return stablehlo::DynamicReshapeOp::create(rewriter, loc, outTy, tensor,
-                                             shape)
+  auto shape = rewriter.create<tensor::FromElementsOp>(loc, newDimSizes);
+  return rewriter.create<stablehlo::DynamicReshapeOp>(loc, outTy, tensor, shape)
       .getResult();
 }
 
@@ -589,10 +584,10 @@ Value getConstantOfShape(PatternRewriter &rewriter, Location loc,
                          const APFloat &constant, Value shape,
                          TensorType outType) {
   auto constAttr = rewriter.getFloatAttr(outType.getElementType(), constant);
-  auto constTensor = stablehlo::ConstantOp::create(rewriter, loc, constAttr);
-  return stablehlo::DynamicBroadcastInDimOp::create(
-             rewriter, loc, outType, constTensor, shape,
-             rewriter.getDenseI64ArrayAttr({}))
+  auto constTensor = rewriter.create<stablehlo::ConstantOp>(loc, constAttr);
+  return rewriter
+      .create<stablehlo::DynamicBroadcastInDimOp>(
+          loc, outType, constTensor, shape, rewriter.getDenseI64ArrayAttr({}))
       .getResult();
 }
 } // namespace hlo

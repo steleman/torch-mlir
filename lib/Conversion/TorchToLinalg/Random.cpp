@@ -58,14 +58,14 @@ static Value toLinearIndex(OpBuilder &b, Location loc,
   assert(indicesIntValues.size() == shapeIntValues.size() &&
          "Expected `indices` and `shape` to have the same size");
   Value result =
-      arith::ConstantOp::create(b, loc, b.getZeroAttr(b.getI64Type()));
+      b.create<arith::ConstantOp>(loc, b.getZeroAttr(b.getI64Type()));
   for (auto [index, stride] : llvm::zip(indicesIntValues, shapeIntValues)) {
     assert(isa<mlir::IntegerType>(index.getType()) &&
            isa<mlir::IntegerType>(stride.getType()) &&
            "Input arrays to `toLinearIndex` must only contain values of type "
            "`mlir::IntegerType`");
-    Value mul = arith::MulIOp::create(b, loc, result, stride);
-    result = arith::AddIOp::create(b, loc, mul, index);
+    Value mul = b.create<arith::MulIOp>(loc, result, stride);
+    result = b.create<arith::AddIOp>(loc, mul, index);
   }
   return result;
 }
@@ -75,22 +75,22 @@ static Value toLinearIndex(OpBuilder &b, Location loc,
 static Value randomUniformUInt(OpBuilder &b, Location loc, Value ctr,
                                Value key) {
   auto mul = [&](Value lhs, Value rhs) -> Value {
-    return arith::MulIOp::create(b, loc, lhs, rhs);
+    return b.create<arith::MulIOp>(loc, lhs, rhs);
   };
   auto add = [&](Value lhs, Value rhs) -> Value {
-    return arith::AddIOp::create(b, loc, lhs, rhs);
+    return b.create<arith::AddIOp>(loc, lhs, rhs);
   };
-  Value cst32 = arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(32));
+  Value cst32 = b.create<arith::ConstantOp>(loc, b.getI64IntegerAttr(32));
   auto shiftRight32 = [&](Value val) -> Value {
-    return arith::ShRUIOp::create(b, loc, val, cst32);
+    return b.create<arith::ShRUIOp>(loc, val, cst32);
   };
   auto swapLoHi = [&](Value val) -> Value {
-    Value leftShift = arith::ShLIOp::create(b, loc, val, cst32);
+    Value leftShift = b.create<arith::ShLIOp>(loc, val, cst32);
     Value rightShift = shiftRight32(val);
-    return arith::OrIOp::create(b, loc, leftShift, rightShift);
+    return b.create<arith::OrIOp>(loc, leftShift, rightShift);
   };
   auto bitwiseXOr = [&](Value lhs, Value rhs) -> Value {
-    return arith::XOrIOp::create(b, loc, lhs, rhs);
+    return b.create<arith::XOrIOp>(loc, lhs, rhs);
   };
 
   Value t, x, y, z;
@@ -115,15 +115,14 @@ static Value randomUniformF64(OpBuilder &b, Location loc, Value ctr, Value key,
   // scale = (max - min) * const(F64,  5.4210108E-20)
   // which is derived from rand(min,max) =
   // rand()/(RAND_MAX/(max-min)) where RAND_MAX = 2^64 - 1
-  Value epsilon = arith::ConstantOp::create(
-      b, loc, b.getFloatAttr(b.getF64Type(), 5.4210108E-20));
-  Value range = arith::SubFOp::create(b, loc, max, min);
-  Value scale = arith::MulFOp::create(b, loc, range, epsilon);
+  Value epsilon = b.create<arith::ConstantOp>(
+      loc, b.getFloatAttr(b.getF64Type(), 5.4210108E-20));
+  Value range = b.create<arith::SubFOp>(loc, max, min);
+  Value scale = b.create<arith::MulFOp>(loc, range, epsilon);
   // res = cast(F64, tempN) * scale + min
-  Value updateFloat =
-      arith::UIToFPOp::create(b, loc, b.getF64Type(), randomVal);
-  Value updateScaled = arith::MulFOp::create(b, loc, updateFloat, scale);
-  Value uniformSample = arith::AddFOp::create(b, loc, updateScaled, min);
+  Value updateFloat = b.create<arith::UIToFPOp>(loc, b.getF64Type(), randomVal);
+  Value updateScaled = b.create<arith::MulFOp>(loc, updateFloat, scale);
+  Value uniformSample = b.create<arith::AddFOp>(loc, updateScaled, min);
 
   return uniformSample;
 }
@@ -154,7 +153,7 @@ public:
           op, "The generator has to be None because only global default "
               "generator is supported");
     // Get key, min and max used by `linalg.generic` compute payload.
-    Value key = TorchConversion::GetNextSeedOp::create(rewriter, loc);
+    Value key = rewriter.create<TorchConversion::GetNextSeedOp>(loc);
     Value min = convertScalarToDtype(rewriter, loc, from, f64Ty);
     Value max = convertScalarToDtype(rewriter, loc, to, f64Ty);
 
@@ -167,28 +166,30 @@ public:
     SmallVector<Value> sizes = getTensorSizes(rewriter, loc, self);
     SmallVector<Value> sizesIntValues =
         castIndexVectorToInt64Vector(rewriter, loc, sizes);
-    Value initTensor = tensor::EmptyOp::create(
-        rewriter, loc, getAsOpFoldResult(sizes), elemTy);
+    Value initTensor =
+        rewriter.create<tensor::EmptyOp>(loc, getAsOpFoldResult(sizes), elemTy);
     Value uniformRes =
-        linalg::GenericOp::create(
-            rewriter, loc, initTensor.getType(), /*inputs=*/ValueRange{},
-            /*outputs=*/initTensor, indexingMaps, iteratorTypes,
-            [&](OpBuilder &b, Location loc, ValueRange args) {
-              SmallVector<Value> indicesIntValues;
-              for (int i = 0; i < resultRank; i++) {
-                indicesIntValues.push_back(castIndexToInt64(
-                    b, loc, linalg::IndexOp::create(b, loc, i)));
-              }
+        rewriter
+            .create<linalg::GenericOp>(
+                loc, initTensor.getType(), /*inputs=*/ValueRange{},
+                /*outputs=*/initTensor, indexingMaps, iteratorTypes,
+                [&](OpBuilder &b, Location loc, ValueRange args) {
+                  SmallVector<Value> indicesIntValues;
+                  for (int i = 0; i < resultRank; i++) {
+                    indicesIntValues.push_back(castIndexToInt64(
+                        b, loc, b.create<linalg::IndexOp>(loc, i)));
+                  }
 
-              Value linearIndex =
-                  toLinearIndex(b, loc, indicesIntValues, sizesIntValues);
+                  Value linearIndex =
+                      toLinearIndex(b, loc, indicesIntValues, sizesIntValues);
 
-              Value res = randomUniformF64(b, loc, linearIndex, key, min, max);
-              Value truncRes = res;
-              if (isa<BFloat16Type, Float16Type, Float32Type>(elemTy))
-                truncRes = arith::TruncFOp::create(b, loc, elemTy, res);
-              linalg::YieldOp::create(b, loc, truncRes);
-            })
+                  Value res =
+                      randomUniformF64(b, loc, linearIndex, key, min, max);
+                  Value truncRes = res;
+                  if (isa<BFloat16Type, Float16Type, Float32Type>(elemTy))
+                    truncRes = b.create<arith::TruncFOp>(loc, elemTy, res);
+                  b.create<linalg::YieldOp>(loc, truncRes);
+                })
             .getResult(0);
 
     Type newResultType = getTypeConverter()->convertType(op.getType());
@@ -245,14 +246,14 @@ public:
           op, "torch.multinomial accepts only rank 1 or 2 tensors as weights");
     }
 
-    Value cstZero = arith::ConstantOp::create(rewriter, loc, i64Ty,
-                                              rewriter.getI64IntegerAttr(0));
-    Value cstOne = arith::ConstantOp::create(rewriter, loc, i64Ty,
-                                             rewriter.getI64IntegerAttr(1));
-    Value zeroIndex = arith::ConstantIndexOp::create(rewriter, loc, 0);
-    Value oneIndex = arith::ConstantIndexOp::create(rewriter, loc, 1);
+    Value cstZero = rewriter.create<arith::ConstantOp>(
+        loc, i64Ty, rewriter.getI64IntegerAttr(0));
+    Value cstOne = rewriter.create<arith::ConstantOp>(
+        loc, i64Ty, rewriter.getI64IntegerAttr(1));
+    Value zeroIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value oneIndex = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     Value numSamplesIndex =
-        arith::IndexCastOp::create(rewriter, loc, indexTy, numSamples);
+        rewriter.create<arith::IndexCastOp>(loc, indexTy, numSamples);
 
     Value numDistributions;
     Value numCategoriesIndex;
@@ -260,22 +261,22 @@ public:
     if (inputRank == 1) {
       numDistributions = cstOne;
       numCategoriesIndex =
-          tensor::DimOp::create(rewriter, loc, indexTy, self, zeroIndex);
+          rewriter.create<tensor::DimOp>(loc, indexTy, self, zeroIndex);
       resultShape = ValueRange{numSamplesIndex};
     } else {
       Value numDistIndex =
-          tensor::DimOp::create(rewriter, loc, indexTy, self, zeroIndex);
+          rewriter.create<tensor::DimOp>(loc, indexTy, self, zeroIndex);
       numCategoriesIndex =
-          tensor::DimOp::create(rewriter, loc, indexTy, self, oneIndex);
+          rewriter.create<tensor::DimOp>(loc, indexTy, self, oneIndex);
       numDistributions =
-          arith::IndexCastOp::create(rewriter, loc, i64Ty, numDistIndex);
+          rewriter.create<arith::IndexCastOp>(loc, i64Ty, numDistIndex);
       resultShape = ValueRange{numDistIndex, numSamplesIndex};
     }
 
     Value numCategories =
-        arith::IndexCastOp::create(rewriter, loc, i64Ty, numCategoriesIndex);
-    Value resultTensor = tensor::EmptyOp::create(
-        rewriter, loc, getAsOpFoldResult(resultShape), i64Ty);
+        rewriter.create<arith::IndexCastOp>(loc, i64Ty, numCategoriesIndex);
+    Value resultTensor = rewriter.create<tensor::EmptyOp>(
+        loc, getAsOpFoldResult(resultShape), i64Ty);
 
     // sum weights for normalization
     torch_to_linalg::ReductionOpInfo opInfo;
@@ -284,8 +285,8 @@ public:
     else
       opInfo = {false, self, {1}};
 
-    Value initSum = arith::ConstantOp::create(rewriter, loc, f64Ty,
-                                              rewriter.getF64FloatAttr(0.0));
+    Value initSum = rewriter.create<arith::ConstantOp>(
+        loc, f64Ty, rewriter.getF64FloatAttr(0.0));
     int64_t srcWidth = cast<mlir::FloatType>(elemTy).getWidth();
     if (srcWidth > 64)
       op->emitWarning("Op bitwidth will be truncated from " +
@@ -293,12 +294,12 @@ public:
     auto sumBody = [&](OpBuilder &b, Location loc, ValueRange payloadArgs) {
       Value input = payloadArgs[0];
       if (srcWidth < 64)
-        input = arith::ExtFOp::create(b, loc, f64Ty, input);
+        input = b.create<arith::ExtFOp>(loc, f64Ty, input);
       if (srcWidth > 64)
-        input = arith::TruncFOp::create(b, loc, f64Ty, input);
+        input = b.create<arith::TruncFOp>(loc, f64Ty, input);
       Value result = payloadArgs[1];
-      Value nextSum = arith::AddFOp::create(b, loc, input, result);
-      linalg::YieldOp::create(b, loc, nextSum);
+      Value nextSum = b.create<arith::AddFOp>(loc, input, result);
+      b.create<linalg::YieldOp>(loc, nextSum);
     };
     Value sumWeights = torch_to_linalg::createReductionLinalgGeneric(
         rewriter, loc, opInfo, initSum, sumBody);
@@ -306,66 +307,66 @@ public:
     // Get multinomial samples for each weight vector
     auto multinomialComputation = [&](OpBuilder &b, Location loc, Value j,
                                       ValueRange args) {
-      Value jIndex = arith::IndexCastOp::create(b, loc, indexTy, j);
+      Value jIndex = b.create<arith::IndexCastOp>(loc, indexTy, j);
 
       Value sum;
       if (inputRank == 1) {
-        sum = tensor::ExtractOp::create(b, loc, sumWeights, ValueRange{});
+        sum = b.create<tensor::ExtractOp>(loc, sumWeights, ValueRange{});
       } else {
-        sum = tensor::ExtractOp::create(b, loc, sumWeights, ValueRange{jIndex});
+        sum = b.create<tensor::ExtractOp>(loc, sumWeights, ValueRange{jIndex});
       }
 
       // compute cdf in loop
-      Value initCdf = tensor::EmptyOp::create(
-          b, loc, getAsOpFoldResult(ValueRange{numCategoriesIndex}), f64Ty);
+      Value initCdf = b.create<tensor::EmptyOp>(
+          loc, getAsOpFoldResult(ValueRange{numCategoriesIndex}), f64Ty);
       Value cdf =
-          scf::ForOp::create(
-              b, loc, cstZero, numCategories, cstOne, ValueRange{initCdf},
-              [&](OpBuilder &b, Location loc, Value i, ValueRange vals) {
-                Value distribution = vals[0];
-                // if (i > 0)
-                auto comparisonPredicate = arith::CmpIPredicateAttr::get(
-                    b.getContext(), arith::CmpIPredicate::sgt);
-                Value condition = arith::CmpIOp::create(
-                    b, loc, comparisonPredicate, i, cstZero);
-                Value iIndex = arith::IndexCastOp::create(b, loc, indexTy, i);
-                // curr_cum = i > 0 ? prob[i] + prob[i-1] : prob[i]
-                ValueRange ind;
-                if (inputRank == 1) {
-                  ind = ValueRange{iIndex};
-                } else {
-                  ind = ValueRange{jIndex, iIndex};
-                }
-                Value currWeight = tensor::ExtractOp::create(b, loc, self, ind);
-                if (srcWidth < 64)
-                  currWeight = arith::ExtFOp::create(b, loc, f64Ty, currWeight);
-                if (srcWidth > 64)
-                  currWeight =
-                      arith::TruncFOp::create(b, loc, f64Ty, currWeight);
-                Value currMass = arith::DivFOp::create(b, loc, currWeight, sum);
-                Value currCum =
-                    scf::IfOp::create(
-                        b, loc, condition,
-                        [&](OpBuilder &b, Location loc) {
-                          Value prevI =
-                              arith::SubIOp::create(b, loc, i, cstOne);
-                          Value prevIndex = arith::IndexCastOp::create(
-                              b, loc, indexTy, prevI);
-                          Value prevMass = tensor::ExtractOp::create(
-                              b, loc, distribution, ValueRange{prevIndex});
-                          Value currSum =
-                              arith::AddFOp::create(b, loc, currMass, prevMass);
-                          scf::YieldOp::create(b, loc, ValueRange(currSum));
-                        },
-                        [&](OpBuilder &b, Location loc) {
-                          scf::YieldOp::create(b, loc, ValueRange{currMass});
-                        })
-                        .getResult(0);
+          b.create<scf::ForOp>(
+               loc, cstZero, numCategories, cstOne, ValueRange{initCdf},
+               [&](OpBuilder &b, Location loc, Value i, ValueRange vals) {
+                 Value distribution = vals[0];
+                 // if (i > 0)
+                 auto comparisonPredicate = arith::CmpIPredicateAttr::get(
+                     b.getContext(), arith::CmpIPredicate::sgt);
+                 Value condition = b.create<arith::CmpIOp>(
+                     loc, comparisonPredicate, i, cstZero);
+                 Value iIndex = b.create<arith::IndexCastOp>(loc, indexTy, i);
+                 // curr_cum = i > 0 ? prob[i] + prob[i-1] : prob[i]
+                 ValueRange ind;
+                 if (inputRank == 1) {
+                   ind = ValueRange{iIndex};
+                 } else {
+                   ind = ValueRange{jIndex, iIndex};
+                 }
+                 Value currWeight = b.create<tensor::ExtractOp>(loc, self, ind);
+                 if (srcWidth < 64)
+                   currWeight = b.create<arith::ExtFOp>(loc, f64Ty, currWeight);
+                 if (srcWidth > 64)
+                   currWeight =
+                       b.create<arith::TruncFOp>(loc, f64Ty, currWeight);
+                 Value currMass = b.create<arith::DivFOp>(loc, currWeight, sum);
+                 Value currCum =
+                     b.create<scf::IfOp>(
+                          loc, condition,
+                          [&](OpBuilder &b, Location loc) {
+                            Value prevI =
+                                b.create<arith::SubIOp>(loc, i, cstOne);
+                            Value prevIndex = b.create<arith::IndexCastOp>(
+                                loc, indexTy, prevI);
+                            Value prevMass = b.create<tensor::ExtractOp>(
+                                loc, distribution, ValueRange{prevIndex});
+                            Value currSum = b.create<arith::AddFOp>(
+                                loc, currMass, prevMass);
+                            b.create<scf::YieldOp>(loc, ValueRange(currSum));
+                          },
+                          [&](OpBuilder &b, Location loc) {
+                            b.create<scf::YieldOp>(loc, ValueRange{currMass});
+                          })
+                         .getResult(0);
 
-                Value updatedCdf = tensor::InsertOp::create(
-                    b, loc, currCum, distribution, ValueRange(iIndex));
-                scf::YieldOp::create(b, loc, ValueRange(updatedCdf));
-              })
+                 Value updatedCdf = b.create<tensor::InsertOp>(
+                     loc, currCum, distribution, ValueRange(iIndex));
+                 b.create<scf::YieldOp>(loc, ValueRange(updatedCdf));
+               })
               .getResult(0);
 
       /*
@@ -382,120 +383,128 @@ public:
        * */
 
       // Get key, min and max used by RNG.
-      Value key = TorchConversion::GetNextSeedOp::create(b, loc);
-      Value min = arith::ConstantOp::create(b, loc, f64Ty,
-                                            rewriter.getF64FloatAttr(0.0));
-      Value max = arith::ConstantOp::create(b, loc, f64Ty,
-                                            rewriter.getF64FloatAttr(1.0));
+      Value key = b.create<TorchConversion::GetNextSeedOp>(loc);
+      Value min = b.create<arith::ConstantOp>(loc, f64Ty,
+                                              rewriter.getF64FloatAttr(0.0));
+      Value max = b.create<arith::ConstantOp>(loc, f64Ty,
+                                              rewriter.getF64FloatAttr(1.0));
 
       // iterate and sample class indices
       Value result = args[0];
       Value finalResult =
-          scf::ForOp::create(
-              rewriter, loc, cstZero, numSamples, cstOne, ValueRange{result},
-              [&](OpBuilder &b, Location loc, Value i, ValueRange args) {
-                // Sample random float
-                Value uniformSample =
-                    randomUniformF64(b, loc, i, key, min, max);
+          rewriter
+              .create<scf::ForOp>(
+                  loc, cstZero, numSamples, cstOne, ValueRange{result},
+                  [&](OpBuilder &b, Location loc, Value i, ValueRange args) {
+                    // Sample random float
+                    Value uniformSample =
+                        randomUniformF64(b, loc, i, key, min, max);
 
-                // binary search in cdf to find our sample
-                Value left = arith::ConstantOp::create(b, loc, i64Ty,
-                                                       b.getI64IntegerAttr(0));
-                Value right = numCategories;
+                    // binary search in cdf to find our sample
+                    Value left = b.create<arith::ConstantOp>(
+                        loc, i64Ty, b.getI64IntegerAttr(0));
+                    Value right = numCategories;
 
-                auto checkCondition = [&](OpBuilder &b, Location loc,
-                                          ValueRange vals) {
-                  Value left = vals[0];
-                  Value right = vals[1];
+                    auto checkCondition = [&](OpBuilder &b, Location loc,
+                                              ValueRange vals) {
+                      Value left = vals[0];
+                      Value right = vals[1];
 
-                  // while (right > left)
-                  auto comparisonPredicate = arith::CmpIPredicateAttr::get(
-                      b.getContext(), arith::CmpIPredicate::sgt);
-                  Value loopCondition = arith::CmpIOp::create(
-                      b, loc, comparisonPredicate, right, left);
-                  scf::ConditionOp::create(b, loc, loopCondition, vals);
-                };
+                      // while (right > left)
+                      auto comparisonPredicate = arith::CmpIPredicateAttr::get(
+                          b.getContext(), arith::CmpIPredicate::sgt);
+                      Value loopCondition = b.create<arith::CmpIOp>(
+                          loc, comparisonPredicate, right, left);
+                      b.create<scf::ConditionOp>(loc, loopCondition, vals);
+                    };
 
-                ValueRange whileResults =
-                    scf::WhileOp::create(
-                        b, loc, TypeRange{i64Ty, i64Ty},
-                        ValueRange{left, right}, checkCondition,
-                        [&](OpBuilder &b, Location loc, ValueRange vals) {
-                          Value left = vals[0];
-                          Value right = vals[1];
+                    ValueRange whileResults =
+                        b.create<scf::WhileOp>(
+                             loc, TypeRange{i64Ty, i64Ty},
+                             ValueRange{left, right}, checkCondition,
+                             [&](OpBuilder &b, Location loc, ValueRange vals) {
+                               Value left = vals[0];
+                               Value right = vals[1];
 
-                          Value two = arith::ConstantOp::create(
-                              b, loc, i64Ty, b.getI64IntegerAttr(2));
-                          Value diff =
-                              arith::SubIOp::create(b, loc, right, left);
-                          Value diffMid =
-                              arith::DivSIOp::create(b, loc, diff, two);
-                          Value midPointer =
-                              arith::AddIOp::create(b, loc, left, diffMid);
-                          Type indexTy = b.getIndexType();
-                          Value midIndex = arith::IndexCastOp::create(
-                              b, loc, indexTy, midPointer);
+                               Value two = b.create<arith::ConstantOp>(
+                                   loc, i64Ty, b.getI64IntegerAttr(2));
+                               Value diff =
+                                   b.create<arith::SubIOp>(loc, right, left);
+                               Value diffMid =
+                                   b.create<arith::DivSIOp>(loc, diff, two);
+                               Value midPointer =
+                                   b.create<arith::AddIOp>(loc, left, diffMid);
+                               Type indexTy = b.getIndexType();
+                               Value midIndex = b.create<arith::IndexCastOp>(
+                                   loc, indexTy, midPointer);
 
-                          // branch and update search indices
-                          auto thenBlock = [&](OpBuilder &b, Location loc) {
-                            // left = mid + 1
-                            Value newLeft = arith::AddIOp::create(
-                                b, loc, midPointer, cstOne);
+                               // branch and update search indices
+                               auto thenBlock = [&](OpBuilder &b,
+                                                    Location loc) {
+                                 // left = mid + 1
+                                 Value newLeft = b.create<arith::AddIOp>(
+                                     loc, midPointer, cstOne);
 
-                            scf::YieldOp::create(b, loc,
-                                                 ValueRange{newLeft, right});
-                          };
-                          auto elseBlock = [&](OpBuilder &b, Location loc) {
-                            // right = mid
-                            scf::YieldOp::create(b, loc,
-                                                 ValueRange{left, midPointer});
-                          };
+                                 b.create<scf::YieldOp>(
+                                     loc, ValueRange{newLeft, right});
+                               };
+                               auto elseBlock = [&](OpBuilder &b,
+                                                    Location loc) {
+                                 // right = mid
+                                 b.create<scf::YieldOp>(
+                                     loc, ValueRange{left, midPointer});
+                               };
 
-                          Value cumProb = tensor::ExtractOp::create(
-                              b, loc, cdf, ValueRange{midIndex});
-                          auto cmpPredicate = arith::CmpFPredicateAttr::get(
-                              b.getContext(), arith::CmpFPredicate::OLT);
-                          Value branchCondition = arith::CmpFOp::create(
-                              b, loc, cmpPredicate, cumProb, uniformSample);
-                          ValueRange branchResults =
-                              scf::IfOp::create(b, loc, branchCondition,
-                                                thenBlock, elseBlock)
-                                  .getResults();
-                          Value newLeft = branchResults[0];
-                          Value newRight = branchResults[1];
+                               Value cumProb = b.create<tensor::ExtractOp>(
+                                   loc, cdf, ValueRange{midIndex});
+                               auto cmpPredicate =
+                                   arith::CmpFPredicateAttr::get(
+                                       b.getContext(),
+                                       arith::CmpFPredicate::OLT);
+                               Value branchCondition = b.create<arith::CmpFOp>(
+                                   loc, cmpPredicate, cumProb, uniformSample);
+                               ValueRange branchResults =
+                                   b.create<scf::IfOp>(loc, branchCondition,
+                                                       thenBlock, elseBlock)
+                                       .getResults();
+                               Value newLeft = branchResults[0];
+                               Value newRight = branchResults[1];
 
-                          scf::YieldOp::create(b, loc,
-                                               ValueRange{newLeft, newRight});
-                        })
-                        .getResults();
+                               b.create<scf::YieldOp>(
+                                   loc, ValueRange{newLeft, newRight});
+                             })
+                            .getResults();
 
-                // sample_idx = left_pointer
-                Value samplePointer = whileResults[0];
-                Value iIndex = arith::IndexCastOp::create(b, loc, indexTy, i);
+                    // sample_idx = left_pointer
+                    Value samplePointer = whileResults[0];
+                    Value iIndex =
+                        b.create<arith::IndexCastOp>(loc, indexTy, i);
 
-                Value prevResult = args[0];
-                Value newResult;
-                if (inputRank == 1) {
-                  // result[i] = sample_idx
-                  newResult = tensor::InsertOp::create(
-                      b, loc, samplePointer, prevResult, ValueRange{iIndex});
-                } else {
-                  // result[j][i] = sample_idx
-                  newResult = tensor::InsertOp::create(
-                      b, loc, samplePointer, prevResult,
-                      ValueRange{jIndex, iIndex});
-                }
+                    Value prevResult = args[0];
+                    Value newResult;
+                    if (inputRank == 1) {
+                      // result[i] = sample_idx
+                      newResult = b.create<tensor::InsertOp>(
+                          loc, samplePointer, prevResult, ValueRange{iIndex});
+                    } else {
+                      // result[j][i] = sample_idx
+                      newResult = b.create<tensor::InsertOp>(
+                          loc, samplePointer, prevResult,
+                          ValueRange{jIndex, iIndex});
+                    }
 
-                scf::YieldOp::create(b, loc, ValueRange{newResult});
-              })
+                    b.create<scf::YieldOp>(loc, ValueRange{newResult});
+                  })
               .getResult(0);
 
-      scf::YieldOp::create(b, loc, ValueRange{finalResult});
+      b.create<scf::YieldOp>(loc, ValueRange{finalResult});
     };
 
     Value finalResultTensor =
-        scf::ForOp::create(rewriter, loc, cstZero, numDistributions, cstOne,
-                           ValueRange{resultTensor}, multinomialComputation)
+        rewriter
+            .create<scf::ForOp>(loc, cstZero, numDistributions, cstOne,
+                                ValueRange{resultTensor},
+                                multinomialComputation)
             .getResult(0);
 
     Type newResultType = getTypeConverter()->convertType(op.getType());

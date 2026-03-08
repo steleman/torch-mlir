@@ -422,10 +422,6 @@ struct OpBinder {
   Operation *op;
 };
 
-struct OnnxTorchToTorchOptions {
-  bool allowNonFinites = true;
-};
-
 /// We use a single pattern per ONNX domain to handle all named custom
 /// ops.
 /// This allows us to avoid the n^2 problem on pattern application by
@@ -435,25 +431,19 @@ struct OnnxTorchToTorchOptions {
 class OnnxCustomOpConversionPattern
     : public OpConversionPattern<Torch::OperatorOp> {
 public:
-  using HandlerFn =
-      std::function<LogicalResult(OpBinder, ConversionPatternRewriter &)>;
-
-  using HandlerFnWithOptions =
-      LogicalResult (*)(OpBinder binder, ConversionPatternRewriter &rewriter,
-                        const OnnxTorchToTorchOptions &options);
-
+  using HandlerFn = LogicalResult (*)(OpBinder binder,
+                                      ConversionPatternRewriter &rewriter);
   struct HandlerReg {
     HandlerReg(HandlerFn callback, int64_t sinceVersion)
-        : callback(std::move(callback)), sinceVersion(sinceVersion) {}
+        : callback(callback), sinceVersion(sinceVersion) {}
     HandlerFn callback;
     int64_t sinceVersion;
   };
 
   OnnxCustomOpConversionPattern(MLIRContext *context, std::string domainPrefix,
-                                int64_t domainVersion,
-                                const OnnxTorchToTorchOptions &options)
+                                int64_t domainVersion)
       : OpConversionPattern(context), domainPrefix(std::move(domainPrefix)),
-        domainVersion(domainVersion), options(options) {
+        domainVersion(domainVersion) {
     // Onnx lowerings could produce other Onnx operations during the rewrite.
     setHasBoundedRewriteRecursion();
   }
@@ -473,16 +463,11 @@ public:
   /// Multiple conversions can be registered for the same op, most
   /// commonly differing by their `sinceVersion`.
   void onOp(StringRef name, int64_t sinceVersion, HandlerFn callback);
-  void onOp(StringRef name, int64_t sinceVersion,
-            HandlerFnWithOptions callback);
-
-  const OnnxTorchToTorchOptions &getOptions() const { return options; }
 
 private:
   std::string domainPrefix;
   int64_t domainVersion;
   DenseMap<StringAttr, SmallVector<HandlerReg, 1>> namedHandlers;
-  OnnxTorchToTorchOptions options;
 };
 
 // Patterns are split into chunks to speed compile time and reduce some
@@ -490,8 +475,7 @@ private:
 void populateComMicrosoftDomain(OnnxCustomOpConversionPattern &patterns);
 void populateDefaultDomainAtoF(OnnxCustomOpConversionPattern &patterns);
 void populateDefaultDomainGtoP(OnnxCustomOpConversionPattern &patterns);
-void populateDefaultDomainQtoZ(OnnxCustomOpConversionPattern &patterns,
-                               const OnnxTorchToTorchOptions &options);
+void populateDefaultDomainQtoZ(OnnxCustomOpConversionPattern &patterns);
 
 } // namespace mlir::torch::onnx_c
 

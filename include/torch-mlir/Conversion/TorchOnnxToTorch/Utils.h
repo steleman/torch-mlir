@@ -44,8 +44,8 @@ Torch::ValueTensorType getQTorchTypeFromTorchIntType(Type ty);
 template <typename T>
 Value getItemOp(OpBinder binder, ConversionPatternRewriter &rewriter,
                 Value &ofItem) {
-  return Torch::AtenItemOp::create(rewriter, binder.getLoc(),
-                                   rewriter.getType<T>(), ofItem);
+  return rewriter.create<Torch::AtenItemOp>(binder.getLoc(),
+                                            rewriter.getType<T>(), ofItem);
 }
 
 LogicalResult OnnxLstmExpander(OpBinder binder,
@@ -83,10 +83,8 @@ struct onnx_list_of_constant_ints_op_binder {
 
       auto ty = cast<ShapedType>(attr.getType());
       ElementsAttr denseAttr;
-      auto blobPtr = attr.getRawHandle().getBlob();
-      if (!blobPtr)
-        return false;
-      denseAttr = DenseElementsAttr::getFromRawBuffer(ty, blobPtr->getData());
+      auto ptr = attr.getRawHandle().getBlob()->getData();
+      denseAttr = DenseElementsAttr::getFromRawBuffer(ty, ptr);
       for (auto axis : denseAttr.getValues<llvm::APInt>()) {
         bind_values.push_back(axis.getSExtValue());
       }

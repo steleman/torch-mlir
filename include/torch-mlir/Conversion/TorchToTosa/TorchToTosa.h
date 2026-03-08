@@ -19,9 +19,6 @@
 namespace mlir {
 namespace torch {
 
-#define GEN_PASS_DECL_CONVERTTORCHTOTOSA
-#include "torch-mlir/Conversion/Passes.h.inc"
-
 /// Collect a set of legal/illegal ops for converting Torch operations to Tosa
 /// dialect.
 void populateTorchToTosaConversionLegalOps(ConversionTarget &target);
@@ -33,14 +30,8 @@ populateTorchToTosaConversionPatternsAndIllegalOps(TypeConverter &typeConverter,
                                                    RewritePatternSet &patterns);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createConvertTorchToTosaPass();
-
-// Convenience wrapper for users who want to pass options as individual
-// parameters
 std::unique_ptr<OperationPass<func::FuncOp>>
-createConvertTorchToTosaPass(bool requireFullTosaConversion,
-                             ArrayRef<std::string> disabled_patterns,
-                             ArrayRef<std::string> enabled_patterns);
-
+createConvertTorchToTosaPass(bool requireFullTosaConversion);
 } // namespace torch
 } // namespace mlir
 

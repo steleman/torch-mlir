@@ -7,8 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Pass/Pass.h"
+#include "./PassDetail.h"
 #include "mlir/Support/LLVM.h"
 #include "torch-mlir/Conversion/TorchOnnxToTorch/Passes.h"
 #include "torch-mlir/Conversion/TorchOnnxToTorch/Patterns.h"
@@ -20,10 +19,6 @@ using llvm::dbgs;
 using namespace mlir;
 using namespace mlir::torch;
 using namespace mlir::torch::onnx_c;
-namespace mlir::torch::onnx_c {
-
-#define GEN_PASS_DEF_CONVERTTORCHONNXTOTORCH
-#include "torch-mlir/Conversion/TorchOnnxToTorch/Passes.h.inc"
 
 #define DEBUG_TYPE "torch-onnx"
 
@@ -42,11 +37,8 @@ int64_t getDefaultOpsetVersion(Operation *containerOp) {
 }
 
 class ConvertTorchOnnxToTorch
-    : public impl::ConvertTorchOnnxToTorchBase<ConvertTorchOnnxToTorch> {
+    : public ConvertTorchOnnxToTorchBase<ConvertTorchOnnxToTorch> {
 public:
-  using impl::ConvertTorchOnnxToTorchBase<
-      ConvertTorchOnnxToTorch>::ConvertTorchOnnxToTorchBase;
-
   ConvertTorchOnnxToTorch() = default;
   void runOnOperation() override {
     MLIRContext *context = &getContext();
@@ -60,16 +52,14 @@ public:
       return signalPassFailure();
     }
 
-    OnnxTorchToTorchOptions options{allowNonFinites};
-
     auto defaultDomainPatterns =
         std::make_unique<OnnxCustomOpConversionPattern>(
             context, "onnx.",
-            /*domainVersion=*/defaultOpsetVersion, options);
+            /*domainVersion=*/defaultOpsetVersion);
     populateComMicrosoftDomain(*defaultDomainPatterns);
     populateDefaultDomainAtoF(*defaultDomainPatterns);
     populateDefaultDomainGtoP(*defaultDomainPatterns);
-    populateDefaultDomainQtoZ(*defaultDomainPatterns, options);
+    populateDefaultDomainQtoZ(*defaultDomainPatterns);
 
     // Ask each domain for its handled names and configure the
     // conversion target.
@@ -92,15 +82,7 @@ public:
 
 } // namespace
 
-std::unique_ptr<OperationPass<func::FuncOp>> createTorchOnnxToTorchPass() {
+std::unique_ptr<OperationPass<func::FuncOp>>
+mlir::torch::onnx_c::createTorchOnnxToTorchPass() {
   return std::make_unique<ConvertTorchOnnxToTorch>();
 }
-
-std::unique_ptr<OperationPass<func::FuncOp>>
-createTorchOnnxToTorchPass(bool allowNonFinites) {
-  ConvertTorchOnnxToTorchOptions options;
-  options.allowNonFinites = allowNonFinites;
-  return std::make_unique<ConvertTorchOnnxToTorch>(options);
-}
-
-} // namespace mlir::torch::onnx_c
